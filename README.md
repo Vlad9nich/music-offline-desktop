@@ -42,7 +42,9 @@ Standalone Windows-first desktop repository for YaNeoDex.
 
 ## Quickstart (Windows)
 
-1. Install JDK 21.
+End users do not need to install Java separately when using the packaged MSI or EXE.
+
+1. Install JDK 21 only if you want to run or build the project from source.
 2. Copy `.env.example` to `.env` and set values as needed.
 3. Run app:
 
@@ -51,7 +53,7 @@ Standalone Windows-first desktop repository for YaNeoDex.
 ```
 
 Scripts auto-detect JDK 21 and will also use Android Studio bundled `jbr` when it is available locally.
-Installer packaging still requires a full JDK 21 with `jpackage.exe`.
+Installer packaging still requires a full JDK 21 with `jpackage.exe`, but the packaged app itself should launch with its bundled runtime and must not require a separate Java install on the user's machine.
 
 ## Build/Test/Package profiles
 
@@ -88,6 +90,8 @@ Desktop client expects OCR candidates in this shape:
   - use the provided `scripts/*.ps1`; they switch to JDK 21 automatically when possible.
 - `package.ps1` stops before Gradle starts:
   - install a full JDK 21 with `jpackage.exe`; Android Studio bundled `jbr` is enough for build/test/run, but not for MSI/EXE packaging.
+- installed app shows a launch error about incomplete runtime:
+  - reinstall using the latest MSI/EXE; the packaged app should already contain everything needed to run.
 - `SDK location not found`:
   - This desktop repo does not need Android SDK; run commands from this repository only.
 - `Playback failed`:
