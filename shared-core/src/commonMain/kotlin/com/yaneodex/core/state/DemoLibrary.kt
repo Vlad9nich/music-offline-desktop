@@ -46,7 +46,7 @@ object DemoLibrary {
                 subtitle = "",
                 accent = "#95F15A",
             ),
-            highlightedTag = "Night Drive",
+            highlightedTag = "",
         )
     }
 

@@ -75,4 +75,103 @@ class DesktopLibraryRepositoryTest {
             root.deleteRecursively()
         }
     }
+
+    @Test
+    fun `repeated imports do not duplicate roots or tracks`() {
+        val root = createTempDirectory("yaneodex-duplicates").toFile()
+        try {
+            File(root, "Artist - Track.mp3").writeBytes(byteArrayOf(1, 2, 3))
+            val repository = DesktopLibraryRepository(
+                storageFile = File(root, "library.json"),
+                configuredDefaultRoots = emptyList(),
+            )
+
+            val first = repository.importRoots(listOf(root.absolutePath))
+            val second = repository.importRoots(listOf(root.absolutePath, "${root.absolutePath}\\"))
+
+            assertEquals(1, first.roots.size)
+            assertEquals(1, second.roots.size)
+            assertEquals(1, second.snapshot.tracks.size)
+            assertEquals("library-all", second.snapshot.playlists.first().id)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `missing roots are dropped gracefully on load`() {
+        val root = createTempDirectory("yaneodex-missing-root").toFile()
+        val missingRoot = File(root, "gone")
+        val repository = DesktopLibraryRepository(
+            storageFile = File(root, "library.json"),
+            configuredDefaultRoots = listOf(missingRoot.absolutePath),
+        )
+
+        val loaded = repository.load()
+
+        assertTrue(loaded.roots.isEmpty())
+        assertTrue(loaded.snapshot.tracks.isEmpty())
+        assertEquals("library-all", loaded.snapshot.playlists.first().id)
+        root.deleteRecursively()
+    }
+
+    @Test
+    fun `load self-heals stored state and keeps library all first`() {
+        val root = createTempDirectory("yaneodex-library-heal").toFile()
+        try {
+            File(root, "Artist - Track.mp3").writeBytes(byteArrayOf(1, 2, 3))
+            val storage = File(root, "library.json")
+            storage.writeText(
+                """
+                {
+                  "roots": [
+                    "${root.absolutePath.replace("\\", "\\\\")}",
+                    "${root.absolutePath.replace("\\", "\\\\")}\\\\",
+                    "${File(root, "missing").absolutePath.replace("\\", "\\\\")}"
+                  ],
+                  "snapshot": {
+                    "tracks": [],
+                    "playlists": []
+                  },
+                  "playlists": [
+                    {
+                      "id": "playlist-1",
+                      "name": "Inbox",
+                      "artworkHint": "IN",
+                      "tone": "#E7C669",
+                      "description": "",
+                      "trackIds": ["ghost-track"],
+                      "createdAtEpochMs": 1
+                    },
+                    {
+                      "id": "library-all",
+                      "name": "Old",
+                      "artworkHint": "OL",
+                      "tone": "#95F15A",
+                      "description": "",
+                      "trackIds": [],
+                      "createdAtEpochMs": 7
+                    }
+                  ]
+                }
+                """.trimIndent(),
+            )
+
+            val repository = DesktopLibraryRepository(
+                storageFile = storage,
+                configuredDefaultRoots = emptyList(),
+            )
+
+            val loaded = repository.load()
+
+            assertEquals(1, loaded.roots.size)
+            assertEquals(root.canonicalPath, loaded.roots.single())
+            assertEquals("library-all", loaded.snapshot.playlists.first().id)
+            assertEquals(7L, loaded.snapshot.playlists.first().createdAtEpochMs)
+            assertTrue(loaded.snapshot.playlists.first().trackIds.isNotEmpty())
+            assertTrue(loaded.snapshot.playlists.first { it.id == "playlist-1" }.trackIds.isEmpty())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 }

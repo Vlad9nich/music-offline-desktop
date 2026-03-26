@@ -26,21 +26,25 @@ class DesktopLibraryRepository(
             if (!storageFile.exists()) null else json.decodeFromString<StoredLibrary>(storageFile.readText())
         }.getOrNull()
 
-        val roots = stored?.roots?.filter { it.isNotBlank() }?.distinct()?.ifEmpty { defaultRoots() } ?: defaultRoots()
+        val roots = sanitizeRoots(stored?.roots ?: defaultRoots())
         val scannedTracks = scanRoots(roots)
         val playlists = reconcilePlaylists(stored?.playlists.orEmpty(), scannedTracks)
-        return StoredLibraryState(roots, LibrarySnapshot(scannedTracks, playlists))
+        val snapshot = LibrarySnapshot(scannedTracks, playlists)
+        if (stored != null && (stored.roots != roots || stored.playlists != playlists || stored.snapshot != snapshot)) {
+            return persist(roots, playlists)
+        }
+        return StoredLibraryState(roots, snapshot)
     }
 
     override fun importRoots(paths: List<String>): StoredLibraryState {
         val current = load()
-        val mergedRoots = (current.roots + paths.map(::normalizePath)).filter { it.isNotBlank() }.distinct()
+        val mergedRoots = sanitizeRoots(current.roots + paths)
         return persist(mergedRoots, current.snapshot.playlists)
     }
 
     override fun refresh(): StoredLibraryState {
         val current = load()
-        return persist(current.roots, current.snapshot.playlists)
+        return persist(sanitizeRoots(current.roots), current.snapshot.playlists)
     }
 
     override fun createPlaylist(name: String): StoredLibraryState {
@@ -100,32 +104,33 @@ class DesktopLibraryRepository(
     }
 
     private fun persist(roots: List<String>, existingPlaylists: List<PlaylistRecord>): StoredLibraryState {
-        val scannedTracks = scanRoots(roots)
+        val sanitizedRoots = sanitizeRoots(roots)
+        val scannedTracks = scanRoots(sanitizedRoots)
         val playlists = reconcilePlaylists(existingPlaylists, scannedTracks)
         val snapshot = LibrarySnapshot(scannedTracks, playlists)
-        val stored = StoredLibrary(roots = roots, snapshot = snapshot, playlists = playlists)
+        val stored = StoredLibrary(roots = sanitizedRoots, snapshot = snapshot, playlists = playlists)
         storageFile.parentFile?.mkdirs()
         storageFile.writeText(json.encodeToString(StoredLibrary.serializer(), stored))
-        return StoredLibraryState(roots = roots, snapshot = snapshot)
+        return StoredLibraryState(roots = sanitizedRoots, snapshot = snapshot)
     }
 
     private fun reconcilePlaylists(existing: List<PlaylistRecord>, tracks: List<TrackRecord>): List<PlaylistRecord> {
         val trackIds = tracks.map { it.id }.toSet()
-        val cleaned = existing.map { playlist ->
+        val cleaned = existing
+            .filterNot { it.id == "library-all" }
+            .map { playlist ->
             playlist.copy(trackIds = playlist.trackIds.filter { it in trackIds })
         }
-        if (cleaned.isNotEmpty()) return cleaned
-        return listOf(
-            PlaylistRecord(
-                id = "library-all",
-                name = "All Tracks",
-                artworkHint = "AT",
-                tone = "#95F15A",
-                description = "",
-                trackIds = tracks.map { it.id },
-                createdAtEpochMs = System.currentTimeMillis(),
-            ),
+        val libraryAll = PlaylistRecord(
+            id = "library-all",
+            name = "All Tracks",
+            artworkHint = "AT",
+            tone = "#95F15A",
+            description = "",
+            trackIds = tracks.map { it.id },
+            createdAtEpochMs = existing.firstOrNull { it.id == "library-all" }?.createdAtEpochMs ?: System.currentTimeMillis(),
         )
+        return listOf(libraryAll) + cleaned
     }
 
     private fun scanRoots(roots: List<String>): List<TrackRecord> {
@@ -183,14 +188,22 @@ class DesktopLibraryRepository(
     }
 
     private fun defaultRoots(): List<String> {
-        val configured = configuredDefaultRoots.map(::normalizePath).filter { it.isNotBlank() }
-        if (configured.isNotEmpty()) return configured.distinct()
-        val music = File(System.getProperty("user.home"), "Music")
-        val yaneodex = File(music, "YaNeoDex")
-        return listOf(yaneodex, music).filter { it.exists() }.map { normalizePath(it.absolutePath) }.distinct()
+        return sanitizeRoots(configuredDefaultRoots)
     }
 
-    private fun normalizePath(path: String): String = File(path).absolutePath
+    private fun sanitizeRoots(paths: List<String>): List<String> {
+        return paths
+            .mapNotNull { raw ->
+                raw.trim()
+                    .takeIf { it.isNotBlank() }
+                    ?.let(::normalizePath)
+                    ?.takeIf { File(it).exists() }
+            }
+            .distinctBy { it.lowercase() }
+    }
+
+    private fun normalizePath(path: String): String =
+        runCatching { File(path).canonicalFile.absolutePath }.getOrElse { File(path).absoluteFile.absolutePath }
 
     private fun playlistTone(index: Int): String {
         val tones = listOf("#95F15A", "#E7C669", "#7CC8FF", "#E58B6B")

@@ -1,6 +1,8 @@
-# YaNeoDex Desktop MVP (Windows)
+# YaNeoDex Desktop (Windows)
 
 Standalone Windows-first desktop repository for YaNeoDex.
+
+Current target: a Minimal Marketable Product for local offline playback with parser and OCR support.
 
 ## What is implemented
 
@@ -65,8 +67,15 @@ Installer packaging still requires a full JDK 21 with `jpackage.exe`, but the pa
 ```
 
 Packaging outputs:
-- portable distribution: `desktop-app/build/compose/binaries/main-release/app/`
-- installers: MSI/EXE under `desktop-app/build/compose/binaries/main-release/`
+- portable distribution: `desktop-app/build/compose/binaries/main/app/`
+- installers: MSI/EXE under `desktop-app/build/compose/binaries/main/`
+
+Canonical release artifacts:
+- MSI: `desktop-app/build/compose/binaries/main/msi/YaNeoDex Desktop-0.1.2.msi`
+- EXE installer: `desktop-app/build/compose/binaries/main/exe/YaNeoDex Desktop-0.1.2.exe`
+- installed app: `C:\Program Files\YaNeoDex Desktop\YaNeoDex Desktop.exe`
+
+For end-user delivery, treat the MSI or EXE installer as the primary artifact. The unpacked `main/app/` bundle is useful for local diagnostics, but the supported smoke path is the installed `Program Files` app.
 
 ## OCR contract
 
@@ -92,6 +101,8 @@ Desktop client expects OCR candidates in this shape:
   - install a full JDK 21 with `jpackage.exe`; Android Studio bundled `jbr` is enough for build/test/run, but not for MSI/EXE packaging.
 - installed app shows a launch error about incomplete runtime:
   - reinstall using the latest MSI/EXE; the packaged app should already contain everything needed to run.
+- `smoke.ps1` fails because the packaged app exits early:
+  - check the packaged runtime in `desktop-app/build/compose/binaries/main/app/` before installing, then reinstall from the latest MSI/EXE.
 - `SDK location not found`:
   - This desktop repo does not need Android SDK; run commands from this repository only.
 - `Playback failed`:
