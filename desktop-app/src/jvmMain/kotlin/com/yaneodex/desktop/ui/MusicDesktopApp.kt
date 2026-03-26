@@ -747,7 +747,10 @@ private fun LanguageButton(label: String, selected: Boolean, onClick: () -> Unit
 
 @Composable
 private fun PlaylistRow(playlists: List<PlaylistRecord>, onSelectPlaylist: (String) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
         playlists.take(3).forEach { playlist -> PlaylistCard(playlist) { onSelectPlaylist(playlist.id) } }
     }
 }
@@ -904,31 +907,42 @@ private fun ParserResults(
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         results.take(8).forEach { item ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 94.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Panel)
-                    .border(1.dp, Outline, RoundedCornerShape(18.dp))
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+            BoxWithConstraints {
+                val compactCard = useCompactParserCardLayout(maxWidth.value.toInt())
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = if (compactCard) 108.dp else 94.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Panel)
+                        .border(1.dp, Outline, RoundedCornerShape(18.dp))
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    ArtworkBadge(item.title.take(2).uppercase(), Sky)
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(item.title, color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(item.artist, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        ArtworkBadge(item.title.take(2).uppercase(), Sky, compact = compactCard)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(item.title, color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(item.artist, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        if (!compactCard) {
+                            AccentChip(item.sourceId, PanelRaised, onClick = { onParserResultClick(item) })
+                        }
                     }
-                    AccentChip(item.sourceId, PanelRaised, onClick = { onParserResultClick(item) })
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AccentChip(strings.previewAction, PanelRaised, onClick = { onParserPreview(item) })
-                    AccentChip(strings.downloadAction, PanelRaised, onClick = { onParserDownload(item) })
-                    AccentChip(strings.addAction, PanelRaised, onClick = { onParserAddToPlaylist(item) })
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (compactCard) {
+                            AccentChip(item.sourceId, PanelRaised, onClick = { onParserResultClick(item) })
+                        }
+                        AccentChip(strings.previewAction, PanelRaised, onClick = { onParserPreview(item) })
+                        AccentChip(strings.downloadAction, PanelRaised, onClick = { onParserDownload(item) })
+                        AccentChip(strings.addAction, PanelRaised, onClick = { onParserAddToPlaylist(item) })
+                    }
                 }
             }
         }
@@ -1412,6 +1426,8 @@ internal fun clampTimelinePosition(positionMs: Long, durationMs: Long): Long {
 }
 
 internal fun useCompactPlayerLayout(widthDp: Int): Boolean = widthDp < 960
+
+internal fun useCompactParserCardLayout(widthDp: Int): Boolean = widthDp < 860
 
 internal fun useCompactTrackRowLayout(widthDp: Int): Boolean = widthDp < 760
 

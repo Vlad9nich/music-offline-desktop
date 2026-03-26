@@ -2,6 +2,9 @@ package com.yaneodex.desktop.app
 
 import com.yaneodex.core.contracts.LibraryRepository
 import com.yaneodex.core.contracts.MusicSourceCatalog
+import com.yaneodex.core.contracts.OcrCreateJobResult
+import com.yaneodex.core.contracts.OcrImportClient
+import com.yaneodex.core.contracts.OcrJobResult
 import com.yaneodex.core.contracts.PlaybackBackend
 import com.yaneodex.core.contracts.PlaybackSnapshot
 import com.yaneodex.core.contracts.StoredLibraryState
@@ -15,7 +18,7 @@ import com.yaneodex.core.state.PlaybackVisualizerState
 import com.yaneodex.desktop.integration.DesktopConfig
 import com.yaneodex.desktop.integration.DesktopDownloadManager
 import com.yaneodex.desktop.integration.DesktopPersistence
-import com.yaneodex.desktop.integration.WindowsOcrClient
+import com.yaneodex.desktop.integration.DownloadManager
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -134,9 +137,42 @@ class DesktopControllerTest {
         assertEquals(180_000L, controller.state.value.playbackDurationMs)
     }
 
+    @Test
+    fun `download parser result reports saved filename instead of raw path`() {
+        val backend = FakePlaybackBackend()
+        val controller = controller(
+            backend = backend,
+            sourceCatalog = FakeMusicSourceCatalog(),
+            downloadManager = FakeDownloadManager(),
+        )
+
+        controller.downloadParserResult(
+            RemoteTrackCandidate(
+                sourceId = "fake",
+                title = "Preview Song",
+                artist = "Preview Artist",
+                detailUrl = "https://example.test/detail",
+            ),
+        )
+
+        waitForStatus(controller) { it.startsWith("Скачано:") }
+        assertEquals("Скачано: Preview Artist - Preview Song.mp3", controller.state.value.parserStatus)
+    }
+
+    @Test
+    fun `missing ocr url shows friendly status`() {
+        val controller = controller(backend = FakePlaybackBackend())
+
+        controller.analyzeScreenshots(listOf(File("C:\\temp\\shot-1.jpg")))
+
+        assertEquals("Укажи URL OCR сервера.", controller.state.value.ocrStatus)
+    }
+
     private fun controller(
         backend: FakePlaybackBackend,
         sourceCatalog: MusicSourceCatalog = FakeMusicSourceCatalog(),
+        ocrClient: OcrImportClient = FakeOcrClient(),
+        downloadManager: DownloadManager = FakeDownloadManager(),
     ): DesktopController {
         val stateFile = File.createTempFile("yaneodex-controller", ".json")
         stateFile.deleteOnExit()
@@ -144,10 +180,10 @@ class DesktopControllerTest {
             config = DesktopConfig(null, null, null, null),
             libraryRepository = FakeLibraryRepository(),
             sourceCatalog = sourceCatalog,
-            ocrClient = WindowsOcrClient(),
+            ocrClient = ocrClient,
             persistence = DesktopPersistence(stateFile),
             playbackBackend = backend,
-            downloadManager = DesktopDownloadManager(),
+            downloadManager = downloadManager,
         )
     }
 
@@ -157,6 +193,14 @@ class DesktopControllerTest {
             Thread.sleep(20)
         }
         error("Track id was not set in time")
+    }
+
+    private fun waitForStatus(controller: DesktopController, predicate: (String) -> Boolean): String {
+        repeat(50) {
+            controller.state.value.parserStatus.takeIf(predicate)?.let { return it }
+            Thread.sleep(20)
+        }
+        error("Parser status was not updated in time")
     }
 }
 
@@ -194,6 +238,23 @@ private class FakePlaybackBackend : PlaybackBackend {
     fun emit(snapshot: PlaybackSnapshot) {
         callback?.invoke(snapshot)
     }
+}
+
+private class FakeDownloadManager : DownloadManager {
+    override fun download(blueprint: DownloadBlueprint, targetDirectory: File): File {
+        return File(targetDirectory, blueprint.suggestedFilename)
+    }
+}
+
+private class FakeOcrClient : OcrImportClient {
+    override fun submitSingleImage(serverUrl: String, authToken: String, fileBytes: ByteArray, filename: String): OcrJobResult =
+        OcrJobResult(status = "completed")
+
+    override fun submitJob(serverUrl: String, authToken: String, files: List<Pair<String, ByteArray>>): OcrCreateJobResult =
+        OcrCreateJobResult(jobId = "job-1")
+
+    override fun pollJob(serverUrl: String, authToken: String, jobId: String): OcrJobResult =
+        OcrJobResult(status = "completed")
 }
 
 private class FakeMusicSourceCatalog : MusicSourceCatalog {

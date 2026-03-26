@@ -2,6 +2,7 @@ package com.yaneodex.desktop.app
 
 import com.yaneodex.core.contracts.LibraryRepository
 import com.yaneodex.core.contracts.MusicSourceCatalog
+import com.yaneodex.core.contracts.OcrImportClient
 import com.yaneodex.core.contracts.OcrJobResult
 import com.yaneodex.core.contracts.PlaybackBackend
 import com.yaneodex.core.contracts.PlaybackSnapshot
@@ -20,6 +21,7 @@ import com.yaneodex.core.state.PlaybackVisualizerState
 import com.yaneodex.core.state.SpotlightCard
 import com.yaneodex.desktop.integration.DesktopConfig
 import com.yaneodex.desktop.integration.DesktopDownloadManager
+import com.yaneodex.desktop.integration.DownloadManager
 import com.yaneodex.desktop.integration.DesktopLibraryRepository
 import com.yaneodex.desktop.integration.DesktopMusicSourceCatalog
 import com.yaneodex.desktop.integration.DesktopPersistence
@@ -46,10 +48,10 @@ class DesktopController(
         configuredDefaultRoots = listOfNotNull(config.libraryPath?.takeIf { it.isNotBlank() }),
     ),
     private val sourceCatalog: MusicSourceCatalog = DesktopMusicSourceCatalog(),
-    private val ocrClient: WindowsOcrClient = WindowsOcrClient(),
+    private val ocrClient: OcrImportClient = WindowsOcrClient(),
     private val persistence: DesktopPersistence = DesktopPersistence(),
     private val playbackBackend: PlaybackBackend = JavaFxPlaybackBackend(),
-    private val downloadManager: DesktopDownloadManager = DesktopDownloadManager(),
+    private val downloadManager: DownloadManager = DesktopDownloadManager(),
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow(buildInitialState())
@@ -298,7 +300,10 @@ class DesktopController(
                 }
                 .onFailure { error ->
                     mutate { current ->
-                        current.copy(parserLoading = false, parserStatus = error.message ?: text(current.language, "Ошибка парсера.", "Parser error."))
+                        current.copy(
+                            parserLoading = false,
+                            parserStatus = friendlyParserFailure(current.language, error),
+                        )
                     }
                 }
         }
@@ -333,7 +338,7 @@ class DesktopController(
                 }
                 .onFailure { error ->
                     mutate { current ->
-                        current.copy(parserStatus = error.message ?: text(current.language, "Не удалось включить предпрослушивание.", "Failed to preview."))
+                        current.copy(parserStatus = friendlyPreviewFailure(current.language, error))
                     }
                 }
         }
@@ -347,10 +352,10 @@ class DesktopController(
                 val targetDir = resolveDownloadDirectory(alsoImportIntoLibrary = false)
                 downloadManager.download(blueprint, targetDir)
             }.onSuccess { file ->
-                mutate { current -> current.copy(parserStatus = file.absolutePath) }
+                mutate { current -> current.copy(parserStatus = friendlyDownloadSuccess(current.language, file)) }
             }.onFailure { error ->
                 mutate { current ->
-                    current.copy(parserStatus = error.message ?: text(current.language, "Не удалось скачать трек.", "Failed to download track."))
+                    current.copy(parserStatus = friendlyDownloadFailure(current.language, error))
                 }
             }
         }
@@ -386,7 +391,7 @@ class DesktopController(
                 }
             }.onFailure { error ->
                 mutate { current ->
-                    current.copy(parserStatus = error.message ?: text(current.language, "Не удалось добавить трек.", "Failed to add track."))
+                    current.copy(parserStatus = friendlyAddTrackFailure(current.language, error))
                 }
             }
         }
@@ -472,9 +477,14 @@ class DesktopController(
         scope.launch {
             runCatching {
                 val response = if (files.size == 1) {
-                    ocrClient.submitSingleImageFile(settings.serverUrl, settings.authToken, files.first())
+                    val file = files.first()
+                    ocrClient.submitSingleImage(settings.serverUrl, settings.authToken, file.readBytes(), file.name)
                 } else {
-                    val job = ocrClient.submitJobFiles(settings.serverUrl, settings.authToken, files)
+                    val job = ocrClient.submitJob(
+                        settings.serverUrl,
+                        settings.authToken,
+                        files.map { it.name to it.readBytes() },
+                    )
                     ocrClient.pollJob(settings.serverUrl, settings.authToken, job.jobId)
                 }
                 buildImportMatches(response)
@@ -488,7 +498,7 @@ class DesktopController(
                 }
             }.onFailure { error ->
                 mutate { current ->
-                    current.copy(ocrLoading = false, ocrStatus = error.message ?: text(current.language, "Ошибка OCR.", "OCR failed."))
+                    current.copy(ocrLoading = false, ocrStatus = friendlyOcrFailure(current.language, error))
                 }
             }
         }
@@ -663,6 +673,61 @@ class DesktopController(
         }
 
         return File(File(System.getProperty("user.home"), "Music"), "YaNeoDex")
+    }
+
+    private fun friendlyParserFailure(language: AppLanguage, error: Throwable): String {
+        val message = error.message.orEmpty()
+        return when {
+            message.contains("HTTP", ignoreCase = true) -> text(language, "Источник сейчас недоступен.", "Source is unavailable right now.")
+            message.contains("timeout", ignoreCase = true) -> text(language, "Источник отвечает слишком долго.", "Source is taking too long to respond.")
+            else -> text(language, "Не удалось выполнить поиск.", "Failed to run search.")
+        }
+    }
+
+    private fun friendlyPreviewFailure(language: AppLanguage, error: Throwable): String {
+        val message = error.message.orEmpty()
+        return when {
+            message.contains("HTTP", ignoreCase = true) -> text(language, "Превью сейчас недоступно.", "Preview is unavailable right now.")
+            else -> text(language, "Не удалось включить предпрослушивание.", "Failed to start preview.")
+        }
+    }
+
+    private fun friendlyDownloadSuccess(language: AppLanguage, file: File): String =
+        text(language, "Скачано: ${file.name}", "Saved: ${file.name}")
+
+    private fun friendlyDownloadFailure(language: AppLanguage, error: Throwable): String {
+        val message = error.message.orEmpty()
+        return when {
+            message.contains("HTTP 401", ignoreCase = true) || message.contains("HTTP 403", ignoreCase = true) ->
+                text(language, "Источник отклонил скачивание.", "Source rejected the download.")
+            message.contains("HTTP", ignoreCase = true) ->
+                text(language, "Сейчас не удалось скачать трек.", "Couldn't download the track right now.")
+            else -> text(language, "Не удалось скачать трек.", "Failed to download the track.")
+        }
+    }
+
+    private fun friendlyAddTrackFailure(language: AppLanguage, error: Throwable): String {
+        val message = error.message.orEmpty()
+        return when {
+            message.contains("not found in library", ignoreCase = true) ->
+                text(language, "Трек скачан, но ещё не появился в библиотеке.", "Track was saved but is not visible in the library yet.")
+            else -> text(language, "Не удалось добавить трек.", "Failed to add the track.")
+        }
+    }
+
+    private fun friendlyOcrFailure(language: AppLanguage, error: Throwable): String {
+        val message = error.message.orEmpty()
+        return when {
+            message.contains("http://", ignoreCase = true) || message.contains("https://", ignoreCase = true) ->
+                text(language, "Проверь адрес OCR сервера.", "Check the OCR server URL.")
+            message.contains("HTTP 401", ignoreCase = true) || message.contains("HTTP 403", ignoreCase = true) ->
+                text(language, "Проверь OCR token.", "Check the OCR token.")
+            message.contains("did not finish in time", ignoreCase = true) || message.contains("timeout", ignoreCase = true) ->
+                text(language, "OCR отвечает слишком долго.", "OCR is taking too long to respond.")
+            message.contains("HTTP", ignoreCase = true) ->
+                text(language, "OCR сервер сейчас недоступен.", "OCR server is unavailable right now.")
+            else -> text(language, "Не удалось обработать скриншоты.", "Failed to process screenshots.")
+        }
     }
 
     private fun spotlightFor(title: String, tone: String): SpotlightCard = SpotlightCard("", title, "", tone)

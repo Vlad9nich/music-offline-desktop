@@ -8,13 +8,17 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
 
-class DesktopDownloadManager {
+interface DownloadManager {
+    fun download(blueprint: DownloadBlueprint, targetDirectory: File): File
+}
+
+class DesktopDownloadManager : DownloadManager {
     private val httpClient: HttpClient = HttpClient.newBuilder()
         .followRedirects(HttpClient.Redirect.NORMAL)
         .connectTimeout(Duration.ofSeconds(20))
         .build()
 
-    fun download(blueprint: DownloadBlueprint, targetDirectory: File): File {
+    override fun download(blueprint: DownloadBlueprint, targetDirectory: File): File {
         targetDirectory.mkdirs()
         val targetFile = uniqueTarget(targetDirectory, sanitizeFilename(blueprint.suggestedFilename))
         val requestBuilder = HttpRequest.newBuilder()

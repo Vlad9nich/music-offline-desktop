@@ -24,6 +24,8 @@ class DesktopLayoutStateTest {
     fun `compact breakpoints preserve dense layout on smaller widths`() {
         assertTrue(useCompactPlayerLayout(920))
         assertFalse(useCompactPlayerLayout(1040))
+        assertTrue(useCompactParserCardLayout(820))
+        assertFalse(useCompactParserCardLayout(920))
         assertTrue(useCompactTrackRowLayout(720))
         assertFalse(useCompactTrackRowLayout(840))
     }
