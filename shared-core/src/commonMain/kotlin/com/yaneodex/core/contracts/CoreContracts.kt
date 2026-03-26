@@ -6,6 +6,7 @@ import com.yaneodex.core.model.LibrarySnapshot
 import com.yaneodex.core.model.RemoteTrackCandidate
 import com.yaneodex.core.model.SourceDescriptor
 import com.yaneodex.core.model.TrackRecord
+import com.yaneodex.core.state.PlaybackVisualizerState
 
 data class StoredLibraryState(
     val roots: List<String>,
@@ -27,6 +28,7 @@ interface PlaybackBackend {
     fun togglePlayPause(onState: (PlaybackSnapshot) -> Unit)
     fun playNext(onState: (PlaybackSnapshot) -> Unit)
     fun playPrevious(onState: (PlaybackSnapshot) -> Unit)
+    fun seekTo(positionMs: Long, onState: (PlaybackSnapshot) -> Unit)
     fun stop()
 }
 
@@ -34,6 +36,9 @@ data class PlaybackSnapshot(
     val currentTrackId: String? = null,
     val isPlaying: Boolean = false,
     val errorMessage: String? = null,
+    val visualizer: PlaybackVisualizerState? = null,
+    val positionMs: Long = 0L,
+    val durationMs: Long = 0L,
 )
 
 interface MusicSource {

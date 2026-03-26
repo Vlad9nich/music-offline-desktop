@@ -9,18 +9,23 @@ import com.yaneodex.core.importer.MatchedTrackCandidate
 import com.yaneodex.core.importer.ScreenshotImportMatcher
 import com.yaneodex.core.model.LibrarySnapshot
 import com.yaneodex.core.model.RemoteTrackCandidate
+import com.yaneodex.core.model.TrackRecord
 import com.yaneodex.core.playback.buildPlaybackQueue
+import com.yaneodex.core.state.AppLanguage
 import com.yaneodex.core.state.DemoLibrary
 import com.yaneodex.core.state.DesktopSection
 import com.yaneodex.core.state.DesktopUiState
 import com.yaneodex.core.state.OcrSettings
+import com.yaneodex.core.state.PlaybackVisualizerState
 import com.yaneodex.core.state.SpotlightCard
 import com.yaneodex.desktop.integration.DesktopConfig
+import com.yaneodex.desktop.integration.DesktopDownloadManager
 import com.yaneodex.desktop.integration.DesktopLibraryRepository
 import com.yaneodex.desktop.integration.DesktopMusicSourceCatalog
 import com.yaneodex.desktop.integration.DesktopPersistence
 import com.yaneodex.desktop.integration.JavaFxPlaybackBackend
 import com.yaneodex.desktop.integration.WindowsOcrClient
+import com.yaneodex.desktop.ui.desktopStrings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -30,6 +35,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.UUID
+import kotlin.math.max
 import kotlin.random.Random
 
 class DesktopController(
@@ -42,6 +49,7 @@ class DesktopController(
     private val ocrClient: WindowsOcrClient = WindowsOcrClient(),
     private val persistence: DesktopPersistence = DesktopPersistence(),
     private val playbackBackend: PlaybackBackend = JavaFxPlaybackBackend(),
+    private val downloadManager: DesktopDownloadManager = DesktopDownloadManager(),
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow(buildInitialState())
@@ -51,21 +59,29 @@ class DesktopController(
         mutate { it.copy(selectedSection = section) }
     }
 
+    fun setLanguage(language: AppLanguage) {
+        mutate { current -> if (current.language == language) current else current.copy(language = language) }
+    }
+
     fun selectPlaylist(playlistId: String) {
         mutate { current ->
-            val playlist = current.snapshot.playlists.firstOrNull { it.id == playlistId }
-            if (playlist == null) {
-                current
-            } else {
-                val queue = playlist.trackIds.mapNotNull { id -> current.snapshot.tracks.firstOrNull { it.id == id } }
-                current.copy(
-                    selectedPlaylistId = playlistId,
-                    selectedSection = DesktopSection.PLAYLISTS,
-                    currentTrackId = queue.firstOrNull()?.id ?: current.currentTrackId,
-                    playbackQueue = buildPlaybackQueue(queue.ifEmpty { current.snapshot.tracks }, queue.firstOrNull()?.id, current.shuffleEnabled, random),
-                    spotlight = SpotlightCard("Playlist focus", playlist.name, playlist.description, playlist.tone),
-                )
-            }
+            val playlist = current.snapshot.playlists.firstOrNull { it.id == playlistId } ?: return@mutate current
+            val queue = playlist.trackIds.mapNotNull { id -> current.snapshot.tracks.firstOrNull { it.id == id } }
+            current.copy(
+                selectedPlaylistId = playlistId,
+                selectedSection = DesktopSection.PLAYLISTS,
+            currentTrackId = queue.firstOrNull()?.id ?: current.currentTrackId,
+            playbackQueue = buildPlaybackQueue(
+                queue.ifEmpty { current.snapshot.tracks },
+                queue.firstOrNull()?.id,
+                current.shuffleEnabled,
+                random,
+            ),
+            visualizer = PlaybackVisualizerState.idle(),
+            playbackPositionMs = 0L,
+            playbackDurationMs = queue.firstOrNull()?.durationMs ?: current.playbackDurationMs,
+            spotlight = spotlightFor(playlist.name, playlist.tone),
+        )
         }
     }
 
@@ -74,64 +90,91 @@ class DesktopController(
             runCatching { libraryRepository.createPlaylist(name) }
                 .onSuccess { stored ->
                     mutate { current ->
+                        val playlist = stored.snapshot.playlists.lastOrNull()
                         rebuildSnapshotState(current, stored.snapshot, stored.roots).copy(
                             selectedSection = DesktopSection.PLAYLISTS,
-                            libraryStatus = "Playlist created: ${name.trim().ifBlank { "New Playlist" }}",
+                            selectedPlaylistId = playlist?.id ?: current.selectedPlaylistId,
+                            libraryStatus = text(current.language, "Плейлист создан.", "Playlist created."),
+                            spotlight = playlist?.let { spotlightFor(it.name, it.tone) } ?: current.spotlight,
                         )
                     }
                 }
                 .onFailure { error ->
-                    mutate { it.copy(libraryStatus = error.message ?: "Failed to create playlist.") }
+                    mutate { current ->
+                        current.copy(libraryStatus = error.message ?: text(current.language, "Не удалось создать плейлист.", "Failed to create playlist."))
+                    }
                 }
         }
     }
 
     fun renameSelectedPlaylist(name: String) {
         val playlistId = state.value.selectedPlaylistId
-        if (playlistId.isBlank()) return
+        if (playlistId.isBlank() || playlistId == ALL_TRACKS_PLAYLIST_ID) return
+
         scope.launch {
             runCatching { libraryRepository.renamePlaylist(playlistId, name) }
                 .onSuccess { stored ->
                     mutate { current ->
+                        val playlist = stored.snapshot.playlists.firstOrNull { it.id == playlistId }
                         rebuildSnapshotState(current, stored.snapshot, stored.roots).copy(
-                            libraryStatus = "Playlist renamed.",
+                            libraryStatus = text(current.language, "Плейлист обновлён.", "Playlist updated."),
+                            spotlight = playlist?.let { spotlightFor(it.name, it.tone) } ?: current.spotlight,
                         )
                     }
                 }
                 .onFailure { error ->
-                    mutate { it.copy(libraryStatus = error.message ?: "Failed to rename playlist.") }
+                    mutate { current ->
+                        current.copy(libraryStatus = error.message ?: text(current.language, "Не удалось переименовать плейлист.", "Failed to rename playlist."))
+                    }
                 }
         }
     }
 
     fun addTrackToSelectedPlaylist(trackId: String) {
-        val playlistId = state.value.selectedPlaylistId
-        if (playlistId.isBlank()) return
         scope.launch {
-            runCatching { libraryRepository.addTrackToPlaylist(trackId, playlistId) }
-                .onSuccess { stored ->
-                    mutate { current ->
-                        rebuildSnapshotState(current, stored.snapshot, stored.roots).copy(libraryStatus = "Track added to playlist.")
-                    }
+            val currentState = state.value
+            runCatching {
+                val ensuredState = ensureEditablePlaylist(currentState)
+                val targetPlaylistId = resolveEditablePlaylistId(ensuredState)
+                    ?: error(text(currentState.language, "Нет доступного плейлиста.", "No editable playlist available."))
+                targetPlaylistId to libraryRepository.addTrackToPlaylist(trackId, targetPlaylistId)
+            }.onSuccess { (targetPlaylistId, stored) ->
+                mutate { current ->
+                    val refreshed = rebuildSnapshotState(current, stored.snapshot, stored.roots).copy(
+                        selectedSection = DesktopSection.PLAYLISTS,
+                        selectedPlaylistId = targetPlaylistId,
+                    )
+                    val playlist = refreshed.snapshot.playlists.firstOrNull { it.id == targetPlaylistId }
+                    refreshed.copy(
+                        libraryStatus = "${text(current.language, "Добавлено в", "Added to")} ${playlist?.name ?: defaultPlaylistName(current.language)}",
+                        spotlight = playlist?.let { spotlightFor(it.name, it.tone) } ?: refreshed.spotlight,
+                    )
                 }
-                .onFailure { error ->
-                    mutate { it.copy(libraryStatus = error.message ?: "Failed to add track to playlist.") }
+            }.onFailure { error ->
+                mutate { current ->
+                    current.copy(libraryStatus = error.message ?: text(current.language, "Не удалось добавить трек.", "Failed to add track."))
                 }
+            }
         }
     }
 
     fun removeTrackFromSelectedPlaylist(trackId: String) {
         val playlistId = state.value.selectedPlaylistId
-        if (playlistId.isBlank()) return
+        if (playlistId.isBlank() || playlistId == ALL_TRACKS_PLAYLIST_ID) return
+
         scope.launch {
             runCatching { libraryRepository.removeTrackFromPlaylist(trackId, playlistId) }
                 .onSuccess { stored ->
                     mutate { current ->
-                        rebuildSnapshotState(current, stored.snapshot, stored.roots).copy(libraryStatus = "Track removed from playlist.")
+                        rebuildSnapshotState(current, stored.snapshot, stored.roots).copy(
+                            libraryStatus = text(current.language, "Трек удалён.", "Track removed."),
+                        )
                     }
                 }
                 .onFailure { error ->
-                    mutate { it.copy(libraryStatus = error.message ?: "Failed to remove track from playlist.") }
+                    mutate { current ->
+                        current.copy(libraryStatus = error.message ?: text(current.language, "Не удалось удалить трек.", "Failed to remove track."))
+                    }
                 }
         }
     }
@@ -146,6 +189,9 @@ class DesktopController(
             current.copy(
                 currentTrackId = trackId,
                 playbackQueue = buildPlaybackQueue(source, trackId, current.shuffleEnabled, random),
+                visualizer = PlaybackVisualizerState.idle(),
+                playbackPositionMs = 0L,
+                playbackDurationMs = source.firstOrNull { it.id == trackId }?.durationMs ?: 0L,
             )
         }
         playbackBackend.playQueue(state.value.playbackQueue, trackId, ::syncPlaybackState)
@@ -157,6 +203,9 @@ class DesktopController(
             current.copy(
                 currentTrackId = queue.firstOrNull()?.id,
                 playbackQueue = buildPlaybackQueue(queue, queue.firstOrNull()?.id, current.shuffleEnabled, random),
+                visualizer = PlaybackVisualizerState.idle(),
+                playbackPositionMs = 0L,
+                playbackDurationMs = queue.firstOrNull()?.durationMs ?: 0L,
             )
         }
         playbackBackend.playQueue(state.value.playbackQueue, state.value.currentTrackId, ::syncPlaybackState)
@@ -167,6 +216,7 @@ class DesktopController(
             val nextShuffle = !current.shuffleEnabled
             val source = when (current.selectedSection) {
                 DesktopSection.PLAYLISTS -> current.selectedPlaylistTracks.ifEmpty { current.snapshot.tracks }
+                DesktopSection.SEARCH -> current.filteredTracks.ifEmpty { current.snapshot.tracks }
                 else -> current.snapshot.tracks
             }
             current.copy(
@@ -188,15 +238,24 @@ class DesktopController(
         playbackBackend.playPrevious(::syncPlaybackState)
     }
 
+    fun seekPlayback(positionMs: Long) {
+        val current = state.value
+        val duration = current.playbackDurationMs.takeIf { it > 0 } ?: current.currentTrack?.durationMs ?: 0L
+        mutate(persist = false) {
+            it.copy(playbackPositionMs = positionMs.coerceIn(0L, duration.takeIf { total -> total > 0 } ?: positionMs.coerceAtLeast(0L)))
+        }
+        playbackBackend.seekTo(positionMs, ::syncPlaybackState)
+    }
+
     fun updateSearchQuery(query: String) {
         mutate { it.copy(searchQuery = query, selectedSection = DesktopSection.SEARCH) }
     }
 
     fun activateTag(tag: String) {
-        mutate {
-            it.copy(
+        mutate { current ->
+            current.copy(
                 highlightedTag = tag,
-                spotlight = SpotlightCard("Mood selected", tag, "Use this lane for adaptive desktop mixes and recommendation rails.", it.selectedPlaylist?.tone ?: "#95F15A"),
+                spotlight = SpotlightCard("", tag, "", current.selectedPlaylist?.tone ?: "#95F15A"),
             )
         }
     }
@@ -204,45 +263,137 @@ class DesktopController(
     fun searchParser(query: String) {
         val normalized = query.trim()
         if (normalized.isBlank()) {
-            mutate { it.copy(parserResults = emptyList(), parserStatus = "Enter a parser query first.", parserLoading = false) }
+            mutate {
+                it.copy(
+                    parserResults = emptyList(),
+                    parserStatus = text(it.language, "Введи запрос.", "Enter a query."),
+                    parserLoading = false,
+                )
+            }
             return
         }
 
-        mutate { it.copy(selectedSection = DesktopSection.SEARCH, parserLoading = true, parserStatus = "Searching parser sources...") }
+        mutate { current ->
+            current.copy(
+                selectedSection = DesktopSection.SEARCH,
+                parserLoading = true,
+                parserStatus = text(current.language, "Поиск...", "Searching..."),
+            )
+        }
+
         scope.launch {
             runCatching { sourceCatalog.search(normalized) }
                 .onSuccess { results ->
-                    mutate {
-                        it.copy(
+                    mutate { current ->
+                        current.copy(
                             parserResults = results,
                             parserLoading = false,
-                            parserStatus = if (results.isEmpty()) "Nothing found for \"$normalized\"." else "Found ${results.size} parser candidates.",
+                            parserStatus = if (results.isEmpty()) {
+                                text(current.language, "Ничего не найдено.", "Nothing found.")
+                            } else {
+                                text(current.language, "Найдено: ${results.size}", "Found: ${results.size}")
+                            },
                         )
                     }
                 }
                 .onFailure { error ->
-                    mutate { it.copy(parserLoading = false, parserStatus = error.message ?: "Parser search failed.") }
+                    mutate { current ->
+                        current.copy(parserLoading = false, parserStatus = error.message ?: text(current.language, "Ошибка парсера.", "Parser error."))
+                    }
                 }
         }
     }
 
-    fun applyParserResult(track: RemoteTrackCandidate) {
-        mutate { it.copy(parserStatus = "Resolving direct media URL for ${track.title}...") }
+    fun previewParserResult(track: RemoteTrackCandidate) {
         scope.launch {
+            mutate { current -> current.copy(parserStatus = text(current.language, "Подготовка предпрослушивания...", "Preparing preview...")) }
             runCatching { sourceCatalog.resolve(track) }
                 .onSuccess { blueprint ->
+                    val previewTrack = TrackRecord(
+                        id = "preview-${UUID.nameUUIDFromBytes(blueprint.url.toByteArray())}",
+                        uri = blueprint.url,
+                        sourceUri = blueprint.url,
+                        title = blueprint.title,
+                        artist = blueprint.artist,
+                        durationMs = 0L,
+                        importedAtEpochMs = System.currentTimeMillis(),
+                    )
                     mutate { current ->
                         current.copy(
-                            spotlight = SpotlightCard("Parser candidate", blueprint.title, "${blueprint.artist} ready from ${track.sourceId}", "#7CC8FF"),
-                            parserStatus = "Resolved download URL: ${blueprint.url.take(96)}",
-                            selectedSection = DesktopSection.SEARCH,
+                            currentTrackId = previewTrack.id,
+                            playbackQueue = listOf(previewTrack),
+                            visualizer = PlaybackVisualizerState.idle(),
+                            playbackPositionMs = 0L,
+                            playbackDurationMs = 0L,
+                            parserStatus = text(current.language, "Предпрослушивание.", "Previewing."),
+                            spotlight = spotlightFor(previewTrack.title, "#7CC8FF"),
                         )
                     }
+                    playbackBackend.playQueue(listOf(previewTrack), previewTrack.id, ::syncPlaybackState)
                 }
                 .onFailure { error ->
-                    mutate { it.copy(parserStatus = error.message ?: "Parser resolve failed.") }
+                    mutate { current ->
+                        current.copy(parserStatus = error.message ?: text(current.language, "Не удалось включить предпрослушивание.", "Failed to preview."))
+                    }
                 }
         }
+    }
+
+    fun downloadParserResult(track: RemoteTrackCandidate) {
+        scope.launch {
+            mutate { current -> current.copy(parserStatus = text(current.language, "Скачивание...", "Downloading...")) }
+            runCatching {
+                val blueprint = sourceCatalog.resolve(track)
+                val targetDir = resolveDownloadDirectory(alsoImportIntoLibrary = false)
+                downloadManager.download(blueprint, targetDir)
+            }.onSuccess { file ->
+                mutate { current -> current.copy(parserStatus = file.absolutePath) }
+            }.onFailure { error ->
+                mutate { current ->
+                    current.copy(parserStatus = error.message ?: text(current.language, "Не удалось скачать трек.", "Failed to download track."))
+                }
+            }
+        }
+    }
+
+    fun addParserResultToPlaylist(track: RemoteTrackCandidate) {
+        scope.launch {
+            val currentState = state.value
+            mutate { current -> current.copy(parserStatus = text(current.language, "Скачивание в библиотеку...", "Downloading to library...")) }
+            runCatching {
+                val blueprint = sourceCatalog.resolve(track)
+                val targetRoot = resolveDownloadDirectory(alsoImportIntoLibrary = true)
+                val file = downloadManager.download(blueprint, targetRoot)
+                val refreshed = refreshLibraryRoot(targetRoot)
+                val trackId = refreshed.snapshot.tracks.firstOrNull { it.sourceUri == file.absolutePath }?.id
+                    ?: error(text(currentState.language, "Скачанный трек не найден в библиотеке.", "Downloaded track not found in library."))
+                val ensured = ensureEditablePlaylist(rebuildSnapshotState(state.value, refreshed.snapshot, refreshed.roots))
+                val playlistId = resolveEditablePlaylistId(ensured)
+                    ?: error(text(currentState.language, "Нет доступного плейлиста.", "No editable playlist available."))
+                val withTrack = libraryRepository.addTrackToPlaylist(trackId, playlistId)
+                Triple(playlistId, withTrack.snapshot, withTrack.roots)
+            }.onSuccess { (playlistId, snapshot, roots) ->
+                mutate { current ->
+                    val refreshed = rebuildSnapshotState(current, snapshot, roots).copy(
+                        selectedSection = DesktopSection.PLAYLISTS,
+                        selectedPlaylistId = playlistId,
+                    )
+                    val playlist = refreshed.snapshot.playlists.firstOrNull { it.id == playlistId }
+                    refreshed.copy(
+                        parserStatus = "${text(current.language, "Добавлено в", "Added to")} ${playlist?.name ?: defaultPlaylistName(current.language)}",
+                        spotlight = playlist?.let { spotlightFor(it.name, it.tone) } ?: refreshed.spotlight,
+                    )
+                }
+            }.onFailure { error ->
+                mutate { current ->
+                    current.copy(parserStatus = error.message ?: text(current.language, "Не удалось добавить трек.", "Failed to add track."))
+                }
+            }
+        }
+    }
+
+    fun applyParserResult(track: RemoteTrackCandidate) {
+        previewParserResult(track)
     }
 
     fun updateOcrSettings(serverUrl: String? = null, authToken: String? = null) {
@@ -262,12 +413,15 @@ class DesktopController(
             runCatching { libraryRepository.importRoots(paths) }
                 .onSuccess { stored ->
                     mutate { current ->
-                        val rebuilt = rebuildSnapshotState(current, stored.snapshot, stored.roots)
-                        rebuilt.copy(libraryStatus = "Imported ${stored.snapshot.tracks.size} local tracks from ${stored.roots.size} root(s).")
+                        rebuildSnapshotState(current, stored.snapshot, stored.roots).copy(
+                            libraryStatus = text(current.language, "Импортировано: ${stored.snapshot.tracks.size}", "Imported: ${stored.snapshot.tracks.size}"),
+                        )
                     }
                 }
                 .onFailure { error ->
-                    mutate { it.copy(libraryStatus = error.message ?: "Library import failed.") }
+                    mutate { current ->
+                        current.copy(libraryStatus = error.message ?: text(current.language, "Ошибка импорта.", "Import failed."))
+                    }
                 }
         }
     }
@@ -279,15 +433,17 @@ class DesktopController(
                     mutate { current ->
                         rebuildSnapshotState(current, stored.snapshot, stored.roots).copy(
                             libraryStatus = if (stored.snapshot.tracks.isEmpty()) {
-                                "No local audio files found in configured roots."
+                                text(current.language, "Аудиофайлы не найдены.", "No audio files found.")
                             } else {
-                                "Library refreshed: ${stored.snapshot.tracks.size} local tracks."
+                                text(current.language, "Треков: ${stored.snapshot.tracks.size}", "Tracks: ${stored.snapshot.tracks.size}")
                             },
                         )
                     }
                 }
                 .onFailure { error ->
-                    mutate { it.copy(libraryStatus = error.message ?: "Library refresh failed.") }
+                    mutate { current ->
+                        current.copy(libraryStatus = error.message ?: text(current.language, "Не удалось обновить библиотеку.", "Refresh failed."))
+                    }
                 }
         }
     }
@@ -296,11 +452,23 @@ class DesktopController(
         if (files.isEmpty()) return
         val settings = state.value.ocrSettings
         if (settings.serverUrl.isBlank()) {
-            mutate { it.copy(selectedSection = DesktopSection.IMPORT, ocrStatus = "Set OCR server URL first.") }
+            mutate { current ->
+                current.copy(
+                    selectedSection = DesktopSection.IMPORT,
+                    ocrStatus = text(current.language, "Укажи URL OCR сервера.", "Set OCR server URL first."),
+                )
+            }
             return
         }
 
-        mutate { it.copy(selectedSection = DesktopSection.IMPORT, ocrLoading = true, ocrStatus = "Uploading screenshots to OCR service...") }
+        mutate { current ->
+            current.copy(
+                selectedSection = DesktopSection.IMPORT,
+                ocrLoading = true,
+                ocrStatus = text(current.language, "Загрузка...", "Uploading..."),
+            )
+        }
+
         scope.launch {
             runCatching {
                 val response = if (files.size == 1) {
@@ -311,15 +479,17 @@ class DesktopController(
                 }
                 buildImportMatches(response)
             }.onSuccess { matches ->
-                mutate {
-                    it.copy(
+                mutate { current ->
+                    current.copy(
                         importMatches = matches,
                         ocrLoading = false,
-                        ocrStatus = "OCR completed. Matches: ${matches.count { match -> match.bestMatch != null }}.",
+                        ocrStatus = text(current.language, "Совпадений: ${matches.count { it.bestMatch != null }}", "Matches: ${matches.count { it.bestMatch != null }}"),
                     )
                 }
             }.onFailure { error ->
-                mutate { it.copy(ocrLoading = false, ocrStatus = error.message ?: "OCR import failed.") }
+                mutate { current ->
+                    current.copy(ocrLoading = false, ocrStatus = error.message ?: text(current.language, "Ошибка OCR.", "OCR failed."))
+                }
             }
         }
     }
@@ -336,46 +506,60 @@ class DesktopController(
         }
         return ScreenshotImportMatcher
             .deduplicate(response.candidates)
-            .map { candidate ->
-                ScreenshotImportMatcher.pickBestMatch(candidate, remoteCandidates, state.value.selectedPlaylistTracks)
-            }
+            .map { candidate -> ScreenshotImportMatcher.pickBestMatch(candidate, remoteCandidates, state.value.selectedPlaylistTracks) }
     }
 
-    private fun mutate(transform: (DesktopUiState) -> DesktopUiState) {
+    private fun mutate(persist: Boolean = true, transform: (DesktopUiState) -> DesktopUiState) {
         _state.update { current ->
             val updated = transform(current)
-            persistence.save(updated)
+            if (persist) {
+                persistence.save(updated)
+            }
             updated
         }
     }
 
     private fun buildInitialState(): DesktopUiState {
         val storedLibrary = libraryRepository.load()
+        val firstRealPlaylistId = storedLibrary.snapshot.playlists.firstOrNull { it.id != ALL_TRACKS_PLAYLIST_ID }?.id
+        val fallbackPlaylistId = storedLibrary.snapshot.playlists.firstOrNull()?.id ?: ALL_TRACKS_PLAYLIST_ID
+
         val base = DemoLibrary.initialState(random).copy(
             snapshot = storedLibrary.snapshot,
             libraryRoots = storedLibrary.roots,
-            libraryStatus = if (storedLibrary.snapshot.tracks.isEmpty()) {
-                "No local audio files found. Add your Windows music folders."
-            } else {
-                "Loaded ${storedLibrary.snapshot.tracks.size} local tracks from disk."
-            },
-            selectedPlaylistId = storedLibrary.snapshot.playlists.firstOrNull()?.id ?: "library-all",
+            selectedPlaylistId = firstRealPlaylistId ?: fallbackPlaylistId,
             currentTrackId = storedLibrary.snapshot.tracks.firstOrNull()?.id,
             playbackQueue = buildPlaybackQueue(storedLibrary.snapshot.tracks, storedLibrary.snapshot.tracks.firstOrNull()?.id, false, random),
+            visualizer = PlaybackVisualizerState.idle(),
             ocrSettings = OcrSettings(
                 serverUrl = config.ocrBaseUrl.orEmpty(),
                 authToken = config.ocrToken.orEmpty(),
             ),
         )
-        return persistence.apply(base, persistence.load())
+        val restored = persistence.apply(base, persistence.load())
+        val selectedPlaylist = storedLibrary.snapshot.playlists.firstOrNull { it.id == restored.selectedPlaylistId }
+
+        return restored.copy(
+            libraryStatus = if (storedLibrary.snapshot.tracks.isEmpty()) {
+                text(restored.language, "Добавь папки с музыкой.", "Add music folders.")
+            } else {
+                text(restored.language, "Треков: ${storedLibrary.snapshot.tracks.size}", "Tracks: ${storedLibrary.snapshot.tracks.size}")
+            },
+            parserStatus = if (restored.parserResults.isEmpty()) strings(restored.language).parserResultsIdle else restored.parserStatus,
+            ocrStatus = if (restored.importMatches.isEmpty()) text(restored.language, "Выбери скриншоты.", "Choose screenshots.") else restored.ocrStatus,
+            spotlight = selectedPlaylist?.let { spotlightFor(it.name, it.tone) } ?: restored.spotlight,
+        )
     }
 
     private fun rebuildSnapshotState(current: DesktopUiState, snapshot: LibrarySnapshot, roots: List<String>): DesktopUiState {
         val selectedPlaylistId = snapshot.playlists.firstOrNull { it.id == current.selectedPlaylistId }?.id
-            ?: snapshot.playlists.firstOrNull()?.id.orEmpty()
-        val currentTrackId = snapshot.tracks.firstOrNull { it.id == current.currentTrackId }?.id
-            ?: snapshot.tracks.firstOrNull()?.id
-        val selectedPlaylistTracks = snapshot.playlists.firstOrNull { it.id == selectedPlaylistId }?.trackIds
+            ?: snapshot.playlists.firstOrNull { it.id != ALL_TRACKS_PLAYLIST_ID }?.id
+            ?: snapshot.playlists.firstOrNull()?.id
+            ?: ALL_TRACKS_PLAYLIST_ID
+        val currentTrackId = snapshot.tracks.firstOrNull { it.id == current.currentTrackId }?.id ?: snapshot.tracks.firstOrNull()?.id
+        val selectedPlaylistTracks = snapshot.playlists
+            .firstOrNull { it.id == selectedPlaylistId }
+            ?.trackIds
             ?.mapNotNull { id -> snapshot.tracks.firstOrNull { it.id == id } }
             .orEmpty()
         val queueSource = selectedPlaylistTracks.ifEmpty { snapshot.tracks }
@@ -386,16 +570,115 @@ class DesktopController(
             selectedPlaylistId = selectedPlaylistId,
             currentTrackId = currentTrackId,
             playbackQueue = buildPlaybackQueue(queueSource, currentTrackId, current.shuffleEnabled, random),
+            visualizer = if (current.isPlaying) current.visualizer else PlaybackVisualizerState.idle(current.visualizer.bands.size),
+            playbackPositionMs = if (currentTrackId == current.currentTrackId) current.playbackPositionMs else 0L,
+            playbackDurationMs = snapshot.tracks.firstOrNull { it.id == currentTrackId }?.durationMs ?: current.playbackDurationMs,
         )
     }
 
     private fun syncPlaybackState(snapshot: PlaybackSnapshot) {
-        mutate { current ->
+        mutate(persist = false) { current ->
             current.copy(
                 currentTrackId = snapshot.currentTrackId ?: current.currentTrackId,
                 isPlaying = snapshot.isPlaying,
+                visualizer = mergeVisualizer(current.visualizer, snapshot.visualizer, snapshot.isPlaying),
+                playbackPositionMs = snapshot.positionMs,
+                playbackDurationMs = snapshot.durationMs.takeIf { it > 0 } ?: current.currentTrack?.durationMs ?: current.playbackDurationMs,
                 libraryStatus = snapshot.errorMessage ?: current.libraryStatus,
             )
         }
+    }
+
+    private fun mergeVisualizer(
+        current: PlaybackVisualizerState,
+        incoming: PlaybackVisualizerState?,
+        isPlaying: Boolean,
+    ): PlaybackVisualizerState {
+        if (incoming == null) {
+            return if (isPlaying) current else decayVisualizer(current)
+        }
+
+        val maxSize = max(current.bands.size, incoming.bands.size)
+        val currentBands = current.bands.padTo(maxSize)
+        val incomingBands = incoming.bands.padTo(maxSize)
+        val smoothedBands = currentBands.zip(incomingBands) { old, next ->
+            val blend = if (next >= old) 0.58f else 0.26f
+            (old + (next - old) * blend).coerceIn(0f, 1f)
+        }
+        val intensity = (current.intensity * 0.32f + incoming.intensity * 0.68f).coerceIn(0f, 1f)
+        return PlaybackVisualizerState(
+            bands = smoothedBands,
+            intensity = intensity,
+            active = isPlaying && incoming.active,
+        )
+    }
+
+    private fun decayVisualizer(current: PlaybackVisualizerState): PlaybackVisualizerState {
+        val bands = current.bands.map { (it * 0.84f).coerceAtLeast(0f) }
+        val intensity = (current.intensity * 0.82f).coerceAtLeast(0f)
+        return PlaybackVisualizerState(
+            bands = bands,
+            intensity = intensity,
+            active = intensity > 0.03f,
+        )
+    }
+
+    private fun ensureEditablePlaylist(current: DesktopUiState): DesktopUiState {
+        val existingEditablePlaylist = current.snapshot.playlists.firstOrNull {
+            it.id == current.selectedPlaylistId && it.id != ALL_TRACKS_PLAYLIST_ID
+        } ?: current.snapshot.playlists.firstOrNull { it.id != ALL_TRACKS_PLAYLIST_ID }
+
+        if (existingEditablePlaylist != null) {
+            return current.copy(selectedPlaylistId = existingEditablePlaylist.id)
+        }
+
+        val created = libraryRepository.createPlaylist(defaultPlaylistName(current.language))
+        mutate { latest ->
+            rebuildSnapshotState(latest, created.snapshot, created.roots).copy(
+                selectedPlaylistId = created.snapshot.playlists.lastOrNull()?.id ?: latest.selectedPlaylistId,
+                selectedSection = DesktopSection.PLAYLISTS,
+            )
+        }
+        return state.value
+    }
+
+    private fun resolveEditablePlaylistId(current: DesktopUiState): String? {
+        return current.snapshot.playlists.firstOrNull { it.id == current.selectedPlaylistId && it.id != ALL_TRACKS_PLAYLIST_ID }?.id
+            ?: current.snapshot.playlists.firstOrNull { it.id != ALL_TRACKS_PLAYLIST_ID }?.id
+    }
+
+    private fun refreshLibraryRoot(root: File) =
+        if (state.value.libraryRoots.any { it.equals(root.absolutePath, ignoreCase = true) }) {
+            libraryRepository.refresh()
+        } else {
+            libraryRepository.importRoots(listOf(root.absolutePath))
+        }
+
+    private fun resolveDownloadDirectory(alsoImportIntoLibrary: Boolean): File {
+        val configured = config.downloadDir?.takeIf { it.isNotBlank() }?.let(::File)
+        if (configured != null) return configured
+
+        if (alsoImportIntoLibrary) {
+            state.value.libraryRoots.firstOrNull()?.let(::File)?.let { return it }
+        }
+
+        return File(File(System.getProperty("user.home"), "Music"), "YaNeoDex")
+    }
+
+    private fun spotlightFor(title: String, tone: String): SpotlightCard = SpotlightCard("", title, "", tone)
+
+    private fun strings(language: AppLanguage) = desktopStrings(language)
+
+    private fun text(language: AppLanguage, ru: String, en: String): String = when (language) {
+        AppLanguage.RU -> ru
+        AppLanguage.EN -> en
+    }
+
+    private fun defaultPlaylistName(language: AppLanguage): String = text(language, "Избранное", "Favorites")
+
+    private fun List<Float>.padTo(size: Int): List<Float> = if (this.size >= size) this else this + List(size - this.size) { 0f }
+
+    private companion object {
+        const val ALL_TRACKS_PLAYLIST_ID = "library-all"
     }
 }

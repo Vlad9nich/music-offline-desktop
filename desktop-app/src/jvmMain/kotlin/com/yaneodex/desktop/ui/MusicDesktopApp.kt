@@ -1,48 +1,97 @@
 package com.yaneodex.desktop.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.NavigateBefore
+import androidx.compose.material.icons.automirrored.rounded.NavigateNext
+import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LibraryMusic
-import androidx.compose.material.icons.rounded.NavigateBefore
-import androidx.compose.material.icons.rounded.NavigateNext
+import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.PlaylistPlay
-import androidx.compose.material.icons.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.composed
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -53,23 +102,38 @@ import com.yaneodex.core.importer.ScreenshotImportItemStatus
 import com.yaneodex.core.model.PlaylistRecord
 import com.yaneodex.core.model.RemoteTrackCandidate
 import com.yaneodex.core.model.TrackRecord
+import com.yaneodex.core.state.AppLanguage
 import com.yaneodex.core.state.DesktopSection
 import com.yaneodex.core.state.DesktopUiState
+import com.yaneodex.core.state.PlaybackVisualizerState
+import kotlin.math.roundToLong
 
-private val Panel = Color(0xFF131514)
-private val PanelAlt = Color(0xFF1A1D1C)
-private val Outline = Color(0x22FFFFFF)
-private val Muted = Color(0xFF99A19A)
+private val Panel = Color(0xFF111313)
+private val PanelRaised = Color(0xFF171A1A)
+private val Outline = Color(0x1FFFFFFF)
+private val Muted = Color(0xFF8A928B)
+private val TextPrimary = Color(0xFFF4F7F3)
 private val Moss = Color(0xFFA7F46A)
 private val Gold = Color(0xFFE7C669)
 private val Sky = Color(0xFF7CC8FF)
 private val Coral = Color(0xFFE58B6B)
+
+private data class LayoutMetrics(
+    val pagePadding: androidx.compose.ui.unit.Dp,
+    val sectionGap: androidx.compose.ui.unit.Dp,
+    val sidebarWidth: androidx.compose.ui.unit.Dp,
+    val rightRailWidth: androidx.compose.ui.unit.Dp,
+    val searchWidth: androidx.compose.ui.unit.Dp,
+    val bottomInfoWidth: androidx.compose.ui.unit.Dp,
+    val compact: Boolean,
+)
 
 @Composable
 fun MusicDesktopApp(
     state: DesktopUiState,
     onSelectSection: (DesktopSection) -> Unit,
     onSelectPlaylist: (String) -> Unit,
+    onLanguageChange: (AppLanguage) -> Unit,
     onCreatePlaylist: (String) -> Unit,
     onRenamePlaylist: (String) -> Unit,
     onPlayTrack: (String) -> Unit,
@@ -79,31 +143,55 @@ fun MusicDesktopApp(
     onTogglePlayPause: () -> Unit,
     onPlayNext: () -> Unit,
     onPlayPrevious: () -> Unit,
+    onSeekPlayback: (Long) -> Unit,
     onToggleShuffle: () -> Unit,
     onSearchChange: (String) -> Unit,
     onRunParserSearch: (String) -> Unit,
     onParserResultClick: (RemoteTrackCandidate) -> Unit,
-    onTagClick: (String) -> Unit,
+    onParserPreview: (RemoteTrackCandidate) -> Unit,
+    onParserDownload: (RemoteTrackCandidate) -> Unit,
+    onParserAddToPlaylist: (RemoteTrackCandidate) -> Unit,
     onImportLibraryFolders: () -> Unit,
     onRefreshLibrary: () -> Unit,
     onOcrServerUrlChange: (String) -> Unit,
     onOcrTokenChange: (String) -> Unit,
     onPickScreenshots: () -> Unit,
 ) {
-    Box(
+    val strings = desktopStrings(state.language)
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color(0xFF171C17), Color(0xFF090A0A)))),
+            .background(Brush.verticalGradient(listOf(Color(0xFF0B0D0C), Color(0xFF050606)))),
     ) {
+        val metrics = remember(maxWidth) {
+            when {
+                maxWidth < 1180.dp -> LayoutMetrics(12.dp, 12.dp, 194.dp, 224.dp, 280.dp, 170.dp, true)
+                maxWidth < 1480.dp -> LayoutMetrics(14.dp, 14.dp, 214.dp, 266.dp, 360.dp, 220.dp, false)
+                else -> LayoutMetrics(18.dp, 18.dp, 238.dp, 320.dp, 430.dp, 260.dp, false)
+            }
+        }
+
         AmbientGlow()
-        Row(modifier = Modifier.fillMaxSize().padding(18.dp), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-            Sidebar(state.selectedSection, onSelectSection)
-            Column(modifier = Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                TopBar(state.searchQuery, onSearchChange, onRunParserSearch)
-                Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+        Row(
+            modifier = Modifier.fillMaxSize().padding(metrics.pagePadding),
+            horizontalArrangement = Arrangement.spacedBy(metrics.sectionGap),
+        ) {
+            Sidebar(state, strings, metrics, onSelectSection, onLanguageChange)
+            Column(
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                verticalArrangement = Arrangement.spacedBy(metrics.sectionGap),
+            ) {
+                TopBar(state.searchQuery, strings, metrics, onSearchChange, onRunParserSearch)
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(metrics.sectionGap),
+                ) {
                     MainColumn(
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                         state = state,
+                        strings = strings,
+                        metrics = metrics,
+                        onOpenSearch = { onSelectSection(DesktopSection.SEARCH) },
                         onSelectPlaylist = onSelectPlaylist,
                         onCreatePlaylist = onCreatePlaylist,
                         onRenamePlaylist = onRenamePlaylist,
@@ -112,74 +200,139 @@ fun MusicDesktopApp(
                         onAddTrackToPlaylist = onAddTrackToPlaylist,
                         onRemoveTrackFromPlaylist = onRemoveTrackFromPlaylist,
                         onParserResultClick = onParserResultClick,
-                        onTagClick = onTagClick,
+                        onParserPreview = onParserPreview,
+                        onParserDownload = onParserDownload,
+                        onParserAddToPlaylist = onParserAddToPlaylist,
                         onImportLibraryFolders = onImportLibraryFolders,
                         onRefreshLibrary = onRefreshLibrary,
                         onOcrServerUrlChange = onOcrServerUrlChange,
                         onOcrTokenChange = onOcrTokenChange,
                         onPickScreenshots = onPickScreenshots,
                     )
-                    RightRail(state, onToggleShuffle, onPlayTrack)
+                    RightRail(state, strings, metrics, onToggleShuffle, onPlayTrack)
                 }
-                BottomPlayer(state, onTogglePlayPause, onPlayPrevious, onPlayNext, onToggleShuffle)
+                BottomPlayer(state, strings, metrics, onTogglePlayPause, onPlayPrevious, onPlayNext, onSeekPlayback, onToggleShuffle)
             }
         }
     }
 }
 
 @Composable
-private fun Sidebar(selectedSection: DesktopSection, onSelectSection: (DesktopSection) -> Unit) {
-    Surface(modifier = Modifier.width(248.dp).fillMaxHeight(), color = Panel, shape = RoundedCornerShape(28.dp)) {
-        Column(modifier = Modifier.fillMaxSize().padding(22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("YND", color = Moss, style = MaterialTheme.typography.labelMedium)
-            Text("YaNeoDex Desktop", style = MaterialTheme.typography.headlineLarge, color = Color.White)
-            Text("Windows-first parser, OCR and shared-core music client.", color = Muted, style = MaterialTheme.typography.bodyMedium)
-            NavPill("Home", Icons.Rounded.Home, selectedSection == DesktopSection.HOME) { onSelectSection(DesktopSection.HOME) }
-            NavPill("Search", Icons.Rounded.Search, selectedSection == DesktopSection.SEARCH) { onSelectSection(DesktopSection.SEARCH) }
-            NavPill("Playlists", Icons.Rounded.PlaylistPlay, selectedSection == DesktopSection.PLAYLISTS) { onSelectSection(DesktopSection.PLAYLISTS) }
-            NavPill("Library", Icons.Rounded.LibraryMusic, selectedSection == DesktopSection.LIBRARY) { onSelectSection(DesktopSection.LIBRARY) }
-            NavPill("Import", Icons.Rounded.AutoAwesome, selectedSection == DesktopSection.IMPORT) { onSelectSection(DesktopSection.IMPORT) }
+private fun Sidebar(
+    state: DesktopUiState,
+    strings: DesktopStrings,
+    metrics: LayoutMetrics,
+    onSelectSection: (DesktopSection) -> Unit,
+    onLanguageChange: (AppLanguage) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.width(metrics.sidebarWidth).fillMaxHeight(),
+        color = Panel,
+        shape = RoundedCornerShape(30.dp),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("YND", color = Moss, style = MaterialTheme.typography.labelMedium, letterSpacing = 2.sp)
+            Text(
+                strings.appTitle,
+                color = TextPrimary,
+                style = MaterialTheme.typography.headlineLarge,
+                fontFamily = FontFamily.Serif,
+            )
+            Spacer(Modifier.height(8.dp))
+            SidebarNavigation(state.selectedSection, strings, onSelectSection)
             Spacer(Modifier.weight(1f))
-            PanelText("Shared core", "Queue logic and OCR matching are separated from the desktop UI layer.")
+            LanguageSwitcher(state.language, strings, onLanguageChange)
         }
     }
 }
 
 @Composable
-private fun TopBar(searchQuery: String, onSearchChange: (String) -> Unit, onRunParserSearch: (String) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text("Dense, dark, musical desktop UI", color = Gold, style = MaterialTheme.typography.labelMedium)
-            Text("Spotify-like composition, desktop-specific structure", color = Color.White, style = MaterialTheme.typography.titleLarge)
+private fun SidebarNavigation(
+    selectedSection: DesktopSection,
+    strings: DesktopStrings,
+    onSelectSection: (DesktopSection) -> Unit,
+) {
+    val items = listOf(
+        Triple(DesktopSection.HOME, strings.navHome, Icons.Rounded.Home),
+        Triple(DesktopSection.SEARCH, strings.navSearch, Icons.Rounded.Search),
+        Triple(DesktopSection.PLAYLISTS, strings.navPlaylists, Icons.AutoMirrored.Rounded.PlaylistPlay),
+        Triple(DesktopSection.LIBRARY, strings.navLibrary, Icons.Rounded.LibraryMusic),
+        Triple(DesktopSection.IMPORT, strings.navImport, Icons.Rounded.AutoAwesome),
+    )
+    val selectedIndex = items.indexOfFirst { it.first == selectedSection }.coerceAtLeast(0)
+    val itemHeight = 56.dp
+    val itemSpacing = 12.dp
+    val highlightOffset by animateDpAsState(
+        targetValue = (itemHeight + itemSpacing) * selectedIndex,
+        animationSpec = spring(stiffness = Spring.StiffnessLow, dampingRatio = Spring.DampingRatioNoBouncy),
+        label = "sidebar-selection-offset",
+    )
+
+    Box {
+        Box(
+            modifier = Modifier
+                .padding(top = highlightOffset)
+                .fillMaxWidth()
+                .height(itemHeight)
+                .clip(RoundedCornerShape(20.dp))
+                .background(Moss.copy(alpha = 0.14f))
+                .border(1.dp, Moss.copy(alpha = 0.34f), RoundedCornerShape(20.dp)),
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(itemSpacing)) {
+            items.forEach { (section, label, icon) ->
+                NavPill(
+                    label = label,
+                    icon = icon,
+                    selected = section == selectedSection,
+                    onClick = { onSelectSection(section) },
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun TopBar(
+    query: String,
+    strings: DesktopStrings,
+    metrics: LayoutMetrics,
+    onSearchChange: (String) -> Unit,
+    onRunParserSearch: (String) -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text(strings.topTitle, color = TextPrimary, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
         Row(
             modifier = Modifier
-                .width(420.dp)
-                .clip(RoundedCornerShape(24.dp))
+                .width(metrics.searchWidth)
+                .clip(RoundedCornerShape(26.dp))
                 .background(Panel)
-                .border(1.dp, Outline, RoundedCornerShape(24.dp))
+                .border(1.dp, Outline, RoundedCornerShape(26.dp))
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Icon(Icons.Rounded.Search, contentDescription = null, tint = Muted)
             BasicTextField(
-                value = searchQuery,
+                value = query,
                 onValueChange = onSearchChange,
                 modifier = Modifier.weight(1f),
                 singleLine = true,
                 cursorBrush = SolidColor(Moss),
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = TextPrimary),
                 decorationBox = { inner ->
-                    if (searchQuery.isBlank()) Text("Search tracks, then run parser", color = Muted, style = MaterialTheme.typography.bodyLarge)
+                    if (query.isBlank()) {
+                        Text(strings.searchPlaceholder, color = Muted, style = MaterialTheme.typography.bodyLarge)
+                    }
                     inner()
                 },
             )
-            Box(
-                modifier = Modifier.clip(RoundedCornerShape(18.dp)).background(Moss).clickable { onRunParserSearch(searchQuery) }.padding(horizontal = 12.dp, vertical = 8.dp),
-            ) {
-                Text("Run", color = Color.Black, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-            }
+            PillButton(strings.runAction, Moss) { onRunParserSearch(query) }
         }
     }
 }
@@ -188,6 +341,9 @@ private fun TopBar(searchQuery: String, onSearchChange: (String) -> Unit, onRunP
 private fun MainColumn(
     modifier: Modifier = Modifier,
     state: DesktopUiState,
+    strings: DesktopStrings,
+    metrics: LayoutMetrics,
+    onOpenSearch: () -> Unit,
     onSelectPlaylist: (String) -> Unit,
     onCreatePlaylist: (String) -> Unit,
     onRenamePlaylist: (String) -> Unit,
@@ -196,47 +352,189 @@ private fun MainColumn(
     onAddTrackToPlaylist: (String) -> Unit,
     onRemoveTrackFromPlaylist: (String) -> Unit,
     onParserResultClick: (RemoteTrackCandidate) -> Unit,
-    onTagClick: (String) -> Unit,
+    onParserPreview: (RemoteTrackCandidate) -> Unit,
+    onParserDownload: (RemoteTrackCandidate) -> Unit,
+    onParserAddToPlaylist: (RemoteTrackCandidate) -> Unit,
     onImportLibraryFolders: () -> Unit,
     onRefreshLibrary: () -> Unit,
     onOcrServerUrlChange: (String) -> Unit,
     onOcrTokenChange: (String) -> Unit,
     onPickScreenshots: () -> Unit,
 ) {
-    Surface(modifier = modifier, color = Color(0xDD101111), shape = RoundedCornerShape(30.dp)) {
-        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(22.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            Hero(state.spotlight.title, state.spotlight.subtitle, state.spotlight.accent, onPlayPlaylist)
-            Tags(state.highlightedTag, onTagClick)
-            when (state.selectedSection) {
-                DesktopSection.HOME -> HomeSection(state, onSelectPlaylist, onPlayTrack)
-                DesktopSection.SEARCH -> SearchSection(state, onParserResultClick)
-                DesktopSection.PLAYLISTS -> PlaylistSection(state, onSelectPlaylist, onPlayTrack, onCreatePlaylist, onRenamePlaylist, onRemoveTrackFromPlaylist)
-                DesktopSection.LIBRARY -> LibrarySection(state, onPlayTrack, onAddTrackToPlaylist, onImportLibraryFolders, onRefreshLibrary)
-                DesktopSection.IMPORT -> ImportSection(state, onOcrServerUrlChange, onOcrTokenChange, onPickScreenshots)
+    Surface(modifier = modifier, color = Color(0xCC101111), shape = RoundedCornerShape(32.dp)) {
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(if (metrics.compact) 16.dp else 22.dp),
+            verticalArrangement = Arrangement.spacedBy(if (metrics.compact) 16.dp else 20.dp),
+        ) {
+            Hero(state, strings, onPlayPlaylist)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clipToBounds(),
+            ) {
+                AnimatedContent(
+                    targetState = state.selectedSection,
+                    transitionSpec = {
+                        val direction = if (targetState.ordinal > initialState.ordinal) 1 else -1
+                        (fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
+                            slideInHorizontally(animationSpec = spring(stiffness = Spring.StiffnessLow)) { fullWidth -> direction * fullWidth / 10 }) togetherWith
+                            (fadeOut(animationSpec = tween(180)) +
+                                slideOutHorizontally(animationSpec = tween(180)) { fullWidth -> -direction * fullWidth / 14 })
+                    },
+                    contentAlignment = Alignment.TopStart,
+                    label = "desktop-section-transition",
+                ) { section ->
+                    when (section) {
+                        DesktopSection.HOME -> {
+                            if (state.isFirstRun) {
+                                OnboardingSection(strings, onImportLibraryFolders, onRefreshLibrary, onOpenSearch)
+                            } else {
+                                Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                                    SectionTitle(strings.sectionPlaylists)
+                                    PlaylistRow(state.snapshot.playlists, onSelectPlaylist)
+                                    SectionTitle(strings.sectionRecentLibrary)
+                                    TrackList(state.snapshot.tracks.take(6), state.currentTrackId, strings, onPlayTrack)
+                                }
+                            }
+                        }
+                        DesktopSection.SEARCH -> {
+                            Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                                StatusCard(strings.sectionParser, state.parserStatus)
+                                SectionTitle(strings.sectionParserResults)
+                                ParserResults(state.parserResults, strings, onParserResultClick, onParserPreview, onParserDownload, onParserAddToPlaylist)
+                            }
+                        }
+                        DesktopSection.PLAYLISTS -> {
+                            PlaylistSection(state, strings, onSelectPlaylist, onPlayTrack, onCreatePlaylist, onRenamePlaylist, onRemoveTrackFromPlaylist)
+                        }
+                        DesktopSection.LIBRARY -> {
+                            if (state.isFirstRun) {
+                                OnboardingSection(strings, onImportLibraryFolders, onRefreshLibrary, onOpenSearch)
+                            } else {
+                                LibrarySection(state, strings, onPlayTrack, onAddTrackToPlaylist, onImportLibraryFolders, onRefreshLibrary)
+                            }
+                        }
+                        DesktopSection.IMPORT -> {
+                            ImportSection(state, strings, onOcrServerUrlChange, onOcrTokenChange, onPickScreenshots)
+                        }
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun HomeSection(state: DesktopUiState, onSelectPlaylist: (String) -> Unit, onPlayTrack: (String) -> Unit) {
-    SectionTitle("Playlist lanes")
-    PlaylistRow(state.snapshot.playlists, onSelectPlaylist)
-    SectionTitle("Recent library")
-    TrackList(state.snapshot.tracks.take(6), state.currentTrackId, onPlayTrack)
+private fun Hero(state: DesktopUiState, strings: DesktopStrings, onPlayPlaylist: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(268.dp)
+            .clip(RoundedCornerShape(30.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        parseTone(state.spotlight.accent).copy(alpha = 0.42f),
+                        Color(0xFF1A1E1B),
+                        Color(0xFF0D0F0E),
+                    ),
+                ),
+            )
+            .border(1.dp, Outline, RoundedCornerShape(30.dp))
+            .padding(24.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier.weight(1.05f).fillMaxHeight(),
+                verticalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Crossfade(state.currentTrack?.title ?: state.spotlight.title, label = "hero-track-title") { title ->
+                        Text(title, color = TextPrimary, style = MaterialTheme.typography.displayLarge, fontFamily = FontFamily.Serif, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Text(
+                        state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle,
+                        color = Color(0xFFD8DDD8),
+                        style = MaterialTheme.typography.bodyLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AccentAction(strings.playLaneAction, Icons.Rounded.PlayArrow, Moss, onPlayPlaylist)
+                    }
+                }
+            }
+            Box(
+                modifier = Modifier.weight(0.95f).fillMaxHeight().clip(RoundedCornerShape(26.dp))
+                    .background(
+                        Brush.radialGradient(
+                            listOf(parseTone(state.spotlight.accent).copy(alpha = 0.32f), Color.Transparent),
+                            radius = 380f,
+                        ),
+                    ),
+            ) {
+                PlaybackVisualizer(
+                    state = state.visualizer,
+                    modifier = Modifier.align(Alignment.Center).fillMaxWidth().height(150.dp).padding(horizontal = 18.dp),
+                    accent = parseTone(state.spotlight.accent),
+                    dense = true,
+                )
+            }
+        }
+    }
 }
 
 @Composable
-private fun SearchSection(state: DesktopUiState, onParserResultClick: (RemoteTrackCandidate) -> Unit) {
-    SectionTitle("Parser status")
-    PanelText("Parser", state.parserStatus)
-    SectionTitle("Parser results")
-    ParserResults(state.parserResults, onParserResultClick)
+private fun OnboardingSection(
+    strings: DesktopStrings,
+    onImportLibraryFolders: () -> Unit,
+    onRefreshLibrary: () -> Unit,
+    onOpenSearch: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(280.dp)
+            .clip(RoundedCornerShape(32.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        Moss.copy(alpha = 0.18f),
+                        Color(0xFF191C1A),
+                        Color(0xFF0D0F0E),
+                    ),
+                ),
+            )
+            .border(1.dp, Outline, RoundedCornerShape(32.dp))
+            .padding(28.dp),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxHeight(),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(strings.onboardingTitle, color = TextPrimary, style = MaterialTheme.typography.displaySmall, fontFamily = FontFamily.Serif)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                AccentAction(strings.onboardingPrimaryAction, Icons.Rounded.FolderOpen, Moss, onImportLibraryFolders)
+                AccentAction(strings.onboardingSecondaryAction, Icons.Rounded.Refresh, Gold, onRefreshLibrary)
+                AccentAction(strings.onboardingParserAction, Icons.Rounded.Search, Sky, onOpenSearch)
+            }
+        }
+        RecordHalo(modifier = Modifier.align(Alignment.CenterEnd))
+    }
 }
 
 @Composable
 private fun PlaylistSection(
     state: DesktopUiState,
+    strings: DesktopStrings,
     onSelectPlaylist: (String) -> Unit,
     onPlayTrack: (String) -> Unit,
     onCreatePlaylist: (String) -> Unit,
@@ -245,57 +543,27 @@ private fun PlaylistSection(
 ) {
     var newPlaylistName by remember { mutableStateOf("") }
     var renameValue by remember(state.selectedPlaylistId) { mutableStateOf(state.selectedPlaylist?.name.orEmpty()) }
-    SectionTitle("Playlists")
+
+    SectionTitle(strings.sectionPlaylists)
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        BasicTextField(
-            value = newPlaylistName,
-            onValueChange = { newPlaylistName = it },
-            modifier = Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(16.dp))
-                .background(PanelAlt)
-                .border(1.dp, Outline, RoundedCornerShape(16.dp))
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
-            cursorBrush = SolidColor(Moss),
-            decorationBox = { inner ->
-                if (newPlaylistName.isBlank()) Text("New playlist name", color = Muted, style = MaterialTheme.typography.bodyMedium)
-                inner()
-            },
-        )
-        AccentAction("Create", Icons.Rounded.PlaylistPlay, Moss) {
+        TextInput(newPlaylistName, strings.createPlaylistPlaceholder, Modifier.weight(1f)) { newPlaylistName = it }
+        AccentAction(strings.createAction, Icons.AutoMirrored.Rounded.PlaylistPlay, Moss) {
             onCreatePlaylist(newPlaylistName)
             newPlaylistName = ""
         }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        BasicTextField(
-            value = renameValue,
-            onValueChange = { renameValue = it },
-            modifier = Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(16.dp))
-                .background(PanelAlt)
-                .border(1.dp, Outline, RoundedCornerShape(16.dp))
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
-            cursorBrush = SolidColor(Moss),
-            decorationBox = { inner ->
-                if (renameValue.isBlank()) Text("Rename selected playlist", color = Muted, style = MaterialTheme.typography.bodyMedium)
-                inner()
-            },
-        )
-        AccentAction("Rename", Icons.Rounded.Tune, Gold) { onRenamePlaylist(renameValue) }
+        TextInput(renameValue, strings.renamePlaylistPlaceholder, Modifier.weight(1f)) { renameValue = it }
+        AccentAction(strings.renameAction, Icons.Rounded.Tune, Gold) { onRenamePlaylist(renameValue) }
     }
     PlaylistColumn(state.snapshot.playlists, state.selectedPlaylistId, onSelectPlaylist)
-    SectionTitle(state.selectedPlaylist?.name ?: "Playlist")
+    SectionTitle(state.selectedPlaylist?.name ?: strings.sectionPlaylist)
     TrackList(
         tracks = state.selectedPlaylistTracks,
         currentTrackId = state.currentTrackId,
+        strings = strings,
         onPlayTrack = onPlayTrack,
-        rowActionLabel = "Remove",
+        rowActionLabel = strings.removeAction,
         onRowAction = onRemoveTrackFromPlaylist,
     )
 }
@@ -303,22 +571,23 @@ private fun PlaylistSection(
 @Composable
 private fun LibrarySection(
     state: DesktopUiState,
+    strings: DesktopStrings,
     onPlayTrack: (String) -> Unit,
     onAddTrackToPlaylist: (String) -> Unit,
     onImportLibraryFolders: () -> Unit,
     onRefreshLibrary: () -> Unit,
 ) {
-    SectionTitle("Library")
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        PrimaryAction("Add folders", Icons.Rounded.FolderOpen, onImportLibraryFolders)
-        AccentAction("Refresh", Icons.Rounded.Refresh, Gold, onRefreshLibrary)
+        AccentAction(strings.addFoldersAction, Icons.Rounded.FolderOpen, Moss, onImportLibraryFolders)
+        AccentAction(strings.refreshAction, Icons.Rounded.Refresh, Gold, onRefreshLibrary)
     }
-    PanelText("Local library", buildLibraryStatusText(state))
+    StatusCard(strings.sectionLibrary, buildLibraryStatusText(state, strings))
     TrackList(
         tracks = state.snapshot.tracks,
         currentTrackId = state.currentTrackId,
+        strings = strings,
         onPlayTrack = onPlayTrack,
-        rowActionLabel = "Add",
+        rowActionLabel = strings.addAction,
         onRowAction = onAddTrackToPlaylist,
     )
 }
@@ -326,52 +595,153 @@ private fun LibrarySection(
 @Composable
 private fun ImportSection(
     state: DesktopUiState,
+    strings: DesktopStrings,
     onOcrServerUrlChange: (String) -> Unit,
     onOcrTokenChange: (String) -> Unit,
     onPickScreenshots: () -> Unit,
 ) {
-    SectionTitle("OCR settings")
-    OcrSettingsPanel(state.ocrSettings.serverUrl, state.ocrSettings.authToken, onOcrServerUrlChange, onOcrTokenChange, onPickScreenshots)
-    PanelText("OCR", state.ocrStatus)
-    SectionTitle("Import review")
-    ImportMatches(state.importMatches)
+    SectionTitle(strings.sectionOcrSettings)
+    Surface(shape = RoundedCornerShape(24.dp), color = Panel) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            LabeledField(strings.ocrServerLabel, state.ocrSettings.serverUrl, strings.ocrServerPlaceholder, onOcrServerUrlChange)
+            LabeledField(strings.bearerTokenLabel, state.ocrSettings.authToken, strings.bearerTokenPlaceholder, onOcrTokenChange)
+            AccentAction(strings.chooseScreenshotsAction, Icons.Rounded.FolderOpen, Moss, onPickScreenshots)
+        }
+    }
+    StatusCard(strings.sectionOcr, state.ocrStatus)
+    SectionTitle(strings.sectionImportReview)
+    ImportMatches(state.importMatches, strings)
 }
 
 @Composable
-private fun Hero(title: String, subtitle: String, accent: String, onPlayPlaylist: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(290.dp)
-            .clip(RoundedCornerShape(30.dp))
-            .background(Brush.linearGradient(listOf(parseTone(accent).copy(alpha = 0.46f), Color(0xFF20251E), Color(0xFF0D0F0E))))
-            .border(1.dp, Outline, RoundedCornerShape(30.dp))
-            .padding(26.dp),
-    ) {
-        Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Curated sequence", color = Gold, style = MaterialTheme.typography.labelMedium)
-                Text(title, color = Color.White, style = MaterialTheme.typography.displayLarge)
-                Text(subtitle, color = Color(0xFFE0E4DE), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(520.dp))
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                PrimaryAction("Play lane", Icons.Rounded.PlayArrow, onPlayPlaylist)
-                AccentChip("Parser ready", Moss)
-                AccentChip("OCR ready", Gold)
-                AccentChip("Windows build", Sky)
+private fun RightRail(
+    state: DesktopUiState,
+    strings: DesktopStrings,
+    metrics: LayoutMetrics,
+    onToggleShuffle: () -> Unit,
+    onPlayTrack: (String) -> Unit,
+) {
+    Surface(modifier = Modifier.width(metrics.rightRailWidth).fillMaxHeight(), color = Color(0xCC101111), shape = RoundedCornerShape(32.dp)) {
+        Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(strings.sectionNowShaping, color = Gold, style = MaterialTheme.typography.labelSmall)
+            CompactNowPlayingCard(
+                title = state.currentTrack?.title ?: strings.noTrackSelected,
+                subtitle = state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle,
+            )
+            MiniPanel(strings.queueLabel, "${state.playbackQueue.size} ${strings.queueItemsSuffix}", Icons.AutoMirrored.Rounded.QueueMusic, Moss)
+            MiniPanel(strings.shuffleLabel, if (state.shuffleEnabled) strings.shuffleOn else strings.shuffleOff, Icons.Rounded.Shuffle, Sky, onToggleShuffle)
+            MiniPanel(strings.parserLabel, state.parserStatus, Icons.Rounded.Sync, Gold)
+            MiniPanel(strings.ocrLabel, state.ocrStatus, Icons.Rounded.AutoAwesome, Coral)
+            Text(strings.sectionUpNext, color = Muted, style = MaterialTheme.typography.labelMedium)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                state.playbackQueue.take(if (metrics.compact) 3 else 4).forEach { track -> QueueRow(track, onPlayTrack, compact = true) }
             }
         }
-        RecordHalo(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 28.dp))
     }
 }
 
 @Composable
-private fun Tags(selectedTag: String, onTagClick: (String) -> Unit) {
-    val tags = listOf("Night Drive", "Focused Code", "Glass Pop", "Soft Warehouse", "Late Commute")
-    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        tags.forEach { tag ->
-            AccentChip(tag, if (tag == selectedTag) Moss else Color(0xFF4D534F), onClick = { onTagClick(tag) })
+private fun BottomPlayer(
+    state: DesktopUiState,
+    strings: DesktopStrings,
+    metrics: LayoutMetrics,
+    onTogglePlayPause: () -> Unit,
+    onPlayPrevious: () -> Unit,
+    onPlayNext: () -> Unit,
+    onSeekPlayback: (Long) -> Unit,
+    onToggleShuffle: () -> Unit,
+) {
+    Surface(shape = RoundedCornerShape(28.dp), color = Panel) {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val compactPlayer = useCompactPlayerLayout(maxWidth.value.toInt())
+            if (compactPlayer) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        ArtworkBadge(state.currentTrack?.title?.take(2)?.uppercase() ?: "YN", Moss, compact = true)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Crossfade(state.currentTrack?.title ?: strings.noTrackSelected, label = "bottom-track-title-compact") { title ->
+                                Text(title, color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            Text(state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    PlaybackTimeline(
+                        positionMs = state.playbackPositionMs,
+                        durationMs = state.playbackDurationMs,
+                        accent = Moss,
+                        onSeek = onSeekPlayback,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        RoundAction(Icons.Rounded.Shuffle, state.shuffleEnabled, onToggleShuffle)
+                        RoundAction(Icons.AutoMirrored.Rounded.NavigateBefore, false, onPlayPrevious)
+                        RoundAction(if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, true, onTogglePlayPause)
+                        RoundAction(Icons.AutoMirrored.Rounded.NavigateNext, false, onPlayNext)
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        ArtworkBadge(state.currentTrack?.title?.take(2)?.uppercase() ?: "YN", Moss)
+                        Column(modifier = Modifier.widthIn(max = metrics.bottomInfoWidth)) {
+                            Crossfade(state.currentTrack?.title ?: strings.noTrackSelected, label = "bottom-track-title") { title ->
+                                Text(title, color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            Text(state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    PlaybackTimeline(
+                        positionMs = state.playbackPositionMs,
+                        durationMs = state.playbackDurationMs,
+                        accent = Moss,
+                        onSeek = onSeekPlayback,
+                        modifier = Modifier.weight(1f).padding(horizontal = 20.dp),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        RoundAction(Icons.Rounded.Shuffle, state.shuffleEnabled, onToggleShuffle)
+                        RoundAction(Icons.AutoMirrored.Rounded.NavigateBefore, false, onPlayPrevious)
+                        RoundAction(if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, true, onTogglePlayPause)
+                        RoundAction(Icons.AutoMirrored.Rounded.NavigateNext, false, onPlayNext)
+                    }
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun LanguageSwitcher(language: AppLanguage, strings: DesktopStrings, onLanguageChange: (AppLanguage) -> Unit) {
+    Surface(shape = RoundedCornerShape(22.dp), color = PanelRaised) {
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Language, contentDescription = null, tint = Gold)
+                Text(strings.languageLabel, color = TextPrimary, style = MaterialTheme.typography.bodyMedium)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LanguageButton("RU", language == AppLanguage.RU) { onLanguageChange(AppLanguage.RU) }
+                LanguageButton("EN", language == AppLanguage.EN) { onLanguageChange(AppLanguage.EN) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LanguageButton(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) Moss else Panel)
+            .border(1.dp, if (selected) Moss.copy(alpha = 0.35f) else Outline, RoundedCornerShape(16.dp))
+            .pressClickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    ) {
+        Text(label, color = if (selected) Color.Black else TextPrimary, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -392,15 +762,14 @@ private fun PlaylistColumn(playlists: List<PlaylistRecord>, selectedPlaylistId: 
                     .clip(RoundedCornerShape(22.dp))
                     .background(if (playlist.id == selectedPlaylistId) parseTone(playlist.tone).copy(alpha = 0.12f) else Panel)
                     .border(1.dp, if (playlist.id == selectedPlaylistId) parseTone(playlist.tone).copy(alpha = 0.34f) else Outline, RoundedCornerShape(22.dp))
-                    .clickable { onSelectPlaylist(playlist.id) }
+                    .pressClickable { onSelectPlaylist(playlist.id) }
                     .padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 ArtworkBadge(playlist.artworkHint, parseTone(playlist.tone))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(playlist.name, color = Color.White, style = MaterialTheme.typography.titleMedium)
-                    Text(playlist.description, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(playlist.name, color = TextPrimary, style = MaterialTheme.typography.titleMedium)
                 }
             }
         }
@@ -409,14 +778,14 @@ private fun PlaylistColumn(playlists: List<PlaylistRecord>, selectedPlaylistId: 
 
 @Composable
 private fun PlaylistCard(playlist: PlaylistRecord, onClick: () -> Unit) {
-    Surface(modifier = Modifier.width(220.dp).clickable(onClick = onClick), shape = RoundedCornerShape(24.dp), color = Panel) {
+    Surface(modifier = Modifier.width(220.dp).pressClickable(onClick = onClick), shape = RoundedCornerShape(24.dp), color = Panel) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(180.dp)
                     .clip(RoundedCornerShape(22.dp))
-                    .background(Brush.linearGradient(listOf(parseTone(playlist.tone), Color(0xFF262926)))),
+                    .background(Brush.linearGradient(listOf(parseTone(playlist.tone), Color(0xFF232625)))),
             ) {
                 Text(
                     playlist.artworkHint,
@@ -427,8 +796,7 @@ private fun PlaylistCard(playlist: PlaylistRecord, onClick: () -> Unit) {
                     fontWeight = FontWeight.Black,
                 )
             }
-            Text(playlist.name, color = Color.White, style = MaterialTheme.typography.titleMedium)
-            Text(playlist.description, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(playlist.name, color = TextPrimary, style = MaterialTheme.typography.titleMedium)
         }
     }
 }
@@ -437,123 +805,138 @@ private fun PlaylistCard(playlist: PlaylistRecord, onClick: () -> Unit) {
 private fun TrackList(
     tracks: List<TrackRecord>,
     currentTrackId: String?,
+    strings: DesktopStrings,
     onPlayTrack: (String) -> Unit,
     rowActionLabel: String? = null,
     onRowAction: ((String) -> Unit)? = null,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         tracks.forEachIndexed { index, track ->
-            Row(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 78.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .background(if (track.id == currentTrackId) Moss.copy(alpha = 0.08f) else Panel)
                     .border(1.dp, if (track.id == currentTrackId) Moss.copy(alpha = 0.24f) else Outline, RoundedCornerShape(18.dp))
-                    .clickable { onPlayTrack(track.id) }
+                    .pressClickable { onPlayTrack(track.id) }
                     .padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Text("${index + 1}".padStart(2, '0'), color = Muted, style = MaterialTheme.typography.labelMedium)
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(track.title, color = Color.White, style = MaterialTheme.typography.bodyLarge)
-                    Text(track.artist, color = Muted, style = MaterialTheme.typography.bodyMedium)
-                }
-                if (!rowActionLabel.isNullOrBlank() && onRowAction != null) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(PanelAlt)
-                            .border(1.dp, Outline, RoundedCornerShape(14.dp))
-                            .clickable { onRowAction(track.id) }
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                val compactRow = useCompactTrackRowLayout(maxWidth.value.toInt())
+                if (compactRow) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ArtworkBadge(track.title.take(2).uppercase(), Moss, compact = true)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(track.title, color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(track.artist, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("${index + 1}".padStart(2, '0'), color = Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(28.dp))
+                            Spacer(Modifier.weight(1f))
+                            if (!rowActionLabel.isNullOrBlank() && onRowAction != null) {
+                                RowActionChip(track.id, rowActionLabel, onRowAction)
+                            }
+                            Text(formatDuration(track.durationMs), color = if (track.id == currentTrackId) Moss else Muted, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
-                        Text(rowActionLabel, color = Color.White, style = MaterialTheme.typography.labelMedium)
+                        Text("${index + 1}".padStart(2, '0'), color = Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(28.dp))
+                        ArtworkBadge(track.title.take(2).uppercase(), Moss, compact = true)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(track.title, color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(track.artist, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        if (!rowActionLabel.isNullOrBlank() && onRowAction != null) {
+                            RowActionChip(track.id, rowActionLabel, onRowAction)
+                        }
+                        Text(formatDuration(track.durationMs), color = if (track.id == currentTrackId) Moss else Muted, style = MaterialTheme.typography.labelMedium)
                     }
                 }
-                Text(formatDuration(track.durationMs), color = if (track.id == currentTrackId) Moss else Muted, style = MaterialTheme.typography.labelMedium)
             }
+        }
+        if (tracks.isEmpty()) {
+            EmptyState(strings.emptyStateTitle)
         }
     }
 }
 
 @Composable
-private fun ParserResults(results: List<RemoteTrackCandidate>, onParserResultClick: (RemoteTrackCandidate) -> Unit) {
+private fun RowActionChip(trackId: String, rowActionLabel: String, onRowAction: (String) -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(PanelRaised)
+            .border(1.dp, Outline, RoundedCornerShape(14.dp))
+            .pressClickable(pressedScale = 0.96f) { onRowAction(trackId) }
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    ) {
+        Text(rowActionLabel, color = TextPrimary, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
+private fun ParserResults(
+    results: List<RemoteTrackCandidate>,
+    strings: DesktopStrings,
+    onParserResultClick: (RemoteTrackCandidate) -> Unit,
+    onParserPreview: (RemoteTrackCandidate) -> Unit,
+    onParserDownload: (RemoteTrackCandidate) -> Unit,
+    onParserAddToPlaylist: (RemoteTrackCandidate) -> Unit,
+) {
     if (results.isEmpty()) {
-        PanelText("Parser results", "No parser results yet.")
+        EmptyState(strings.noParserResults)
         return
     }
+
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         results.take(8).forEach { item ->
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 94.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .background(Panel)
                     .border(1.dp, Outline, RoundedCornerShape(18.dp))
-                    .clickable { onParserResultClick(item) }
                     .padding(14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                ArtworkBadge(item.title.take(2).uppercase(), Sky)
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(item.title, color = Color.White, style = MaterialTheme.typography.bodyLarge)
-                    Text(item.artist, color = Muted, style = MaterialTheme.typography.bodyMedium)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    ArtworkBadge(item.title.take(2).uppercase(), Sky)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(item.title, color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(item.artist, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    AccentChip(item.sourceId, PanelRaised, onClick = { onParserResultClick(item) })
                 }
-                Text(item.sourceId, color = Gold, style = MaterialTheme.typography.labelMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AccentChip(strings.previewAction, PanelRaised, onClick = { onParserPreview(item) })
+                    AccentChip(strings.downloadAction, PanelRaised, onClick = { onParserDownload(item) })
+                    AccentChip(strings.addAction, PanelRaised, onClick = { onParserAddToPlaylist(item) })
+                }
             }
         }
     }
 }
 
 @Composable
-private fun OcrSettingsPanel(
-    serverUrl: String,
-    authToken: String,
-    onOcrServerUrlChange: (String) -> Unit,
-    onOcrTokenChange: (String) -> Unit,
-    onPickScreenshots: () -> Unit,
-) {
-    Surface(shape = RoundedCornerShape(24.dp), color = Panel) {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            LabeledField("OCR server", serverUrl, "https://host", onOcrServerUrlChange)
-            LabeledField("Bearer token", authToken, "Optional token", onOcrTokenChange)
-            PrimaryAction("Choose screenshots", Icons.Rounded.FolderOpen, onPickScreenshots)
-        }
-    }
-}
-
-@Composable
-private fun LabeledField(label: String, value: String, placeholder: String, onChange: (String) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(label.uppercase(), color = Gold, style = MaterialTheme.typography.labelMedium)
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(18.dp))
-                .background(PanelAlt)
-                .border(1.dp, Outline, RoundedCornerShape(18.dp))
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-        ) {
-            BasicTextField(
-                value = value,
-                onValueChange = onChange,
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                cursorBrush = SolidColor(Moss),
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
-                decorationBox = { inner ->
-                    if (value.isBlank()) Text(placeholder, color = Muted, style = MaterialTheme.typography.bodyLarge)
-                    inner()
-                },
-            )
-        }
-    }
-}
-
-@Composable
-private fun ImportMatches(matches: List<MatchedTrackCandidate>) {
+private fun ImportMatches(matches: List<MatchedTrackCandidate>, strings: DesktopStrings) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         matches.forEach { item ->
             val accent = when (item.status) {
@@ -564,11 +947,11 @@ private fun ImportMatches(matches: List<MatchedTrackCandidate>) {
                 ScreenshotImportItemStatus.RECOGNIZED -> Sky
             }
             Surface(shape = RoundedCornerShape(20.dp), color = Panel) {
-                Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(item.recognized.rawText, color = Color.White, style = MaterialTheme.typography.titleMedium)
-                    Text(item.message ?: "Match ready.", color = accent, style = MaterialTheme.typography.bodyMedium)
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(item.recognized.rawText, color = TextPrimary, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(item.message ?: strings.importReadyMessage, color = accent, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     item.bestMatch?.let { match ->
-                        Text("${match.artist} - ${match.title}", color = Muted, style = MaterialTheme.typography.bodyMedium)
+                        Text("${match.artist} - ${match.title}", color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -577,71 +960,89 @@ private fun ImportMatches(matches: List<MatchedTrackCandidate>) {
 }
 
 @Composable
-private fun RightRail(state: DesktopUiState, onToggleShuffle: () -> Unit, onPlayTrack: (String) -> Unit) {
-    Surface(modifier = Modifier.width(320.dp).fillMaxHeight(), color = Color(0xDD101111), shape = RoundedCornerShape(30.dp)) {
-        Column(modifier = Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("Now shaping", color = Gold, style = MaterialTheme.typography.labelMedium)
-            PanelText(state.currentTrack?.title ?: "Nothing selected", state.currentTrack?.artist ?: "Choose a track to build the queue.")
-            MiniPanel("Queue", "${state.playbackQueue.size} items", Icons.Rounded.QueueMusic, Moss)
-            MiniPanel("Shuffle", if (state.shuffleEnabled) "Artist-aware" else "Off", Icons.Rounded.Shuffle, Sky, onToggleShuffle)
-            MiniPanel("Parser", state.parserStatus, Icons.Rounded.Sync, Gold)
-            MiniPanel("OCR", state.ocrStatus, Icons.Rounded.AutoAwesome, Coral)
-            Text("Up next", color = Color.White, style = MaterialTheme.typography.titleMedium)
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                state.playbackQueue.take(5).forEach { track ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(Panel)
-                            .border(1.dp, Outline, RoundedCornerShape(18.dp))
-                            .clickable { onPlayTrack(track.id) }
-                            .padding(12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        ArtworkBadge(track.title.take(2).uppercase(), Moss)
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(track.title, color = Color.White, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(track.artist, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                }
-            }
+private fun QueueRow(track: TrackRecord, onPlayTrack: (String) -> Unit, compact: Boolean = false) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = if (compact) 58.dp else 72.dp)
+            .clip(RoundedCornerShape(if (compact) 16.dp else 18.dp))
+            .background(Panel)
+            .border(1.dp, Outline, RoundedCornerShape(if (compact) 16.dp else 18.dp))
+            .pressClickable { onPlayTrack(track.id) }
+            .padding(horizontal = if (compact) 10.dp else 12.dp, vertical = if (compact) 9.dp else 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ArtworkBadge(track.title.take(2).uppercase(), Moss, compact = compact)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(track.title, color = TextPrimary, style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(track.artist, color = Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
 
 @Composable
-private fun BottomPlayer(
-    state: DesktopUiState,
-    onTogglePlayPause: () -> Unit,
-    onPlayPrevious: () -> Unit,
-    onPlayNext: () -> Unit,
-    onToggleShuffle: () -> Unit,
-) {
-    Surface(shape = RoundedCornerShape(28.dp), color = Panel) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                ArtworkBadge(state.currentTrack?.title?.take(2)?.uppercase() ?: "YN", Moss)
-                Column {
-                    Text(state.currentTrack?.title ?: "No track selected", color = Color.White, style = MaterialTheme.typography.bodyLarge)
-                    Text(state.currentTrack?.artist ?: "Build a lane from parser or library", color = Muted, style = MaterialTheme.typography.bodyMedium)
-                }
+private fun TextInput(value: String, placeholder: String, modifier: Modifier = Modifier, onValueChange: (String) -> Unit) {
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(PanelRaised)
+            .border(1.dp, Outline, RoundedCornerShape(16.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodyMedium.copy(color = TextPrimary),
+        cursorBrush = SolidColor(Moss),
+        decorationBox = { inner ->
+            if (value.isBlank()) {
+                Text(placeholder, color = Muted, style = MaterialTheme.typography.bodyMedium)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                RoundAction(Icons.Rounded.Shuffle, state.shuffleEnabled, onToggleShuffle)
-                RoundAction(Icons.Rounded.NavigateBefore, false, onPlayPrevious)
-                RoundAction(if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, true, onTogglePlayPause)
-                RoundAction(Icons.Rounded.NavigateNext, false, onPlayNext)
-                RoundAction(Icons.Rounded.Tune, false) {}
-            }
+            inner()
+        },
+    )
+}
+
+@Composable
+private fun LabeledField(label: String, value: String, placeholder: String, onChange: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label.uppercase(), color = Gold, style = MaterialTheme.typography.labelMedium)
+        TextInput(value, placeholder, Modifier.fillMaxWidth(), onChange)
+    }
+}
+
+@Composable
+private fun StatusCard(title: String, body: String) {
+    Surface(shape = RoundedCornerShape(22.dp), color = Panel) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(title.uppercase(), color = Gold, style = MaterialTheme.typography.labelMedium)
+            Text(body, color = TextPrimary, style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis)
         }
     }
+}
+
+@Composable
+private fun CompactNowPlayingCard(title: String, subtitle: String) {
+    Surface(shape = RoundedCornerShape(20.dp), color = Panel) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title.uppercase(), color = Gold, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, color = TextPrimary, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun EmptyState(title: String) {
+    Surface(shape = RoundedCornerShape(22.dp), color = Panel) {
+        Box(modifier = Modifier.fillMaxWidth().padding(18.dp), contentAlignment = Alignment.CenterStart) {
+            Text(title, color = Muted, style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(title: String) {
+    Text(title, color = TextPrimary, style = MaterialTheme.typography.titleLarge)
 }
 
 @Composable
@@ -649,32 +1050,18 @@ private fun NavPill(label: String, icon: androidx.compose.ui.graphics.vector.Ima
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .height(56.dp)
             .clip(RoundedCornerShape(20.dp))
-            .background(if (selected) Moss.copy(alpha = 0.14f) else Color.Transparent)
-            .border(1.dp, if (selected) Moss.copy(alpha = 0.35f) else Outline, RoundedCornerShape(20.dp))
-            .clickable(onClick = onClick)
+            .background(Color.Transparent)
+            .border(1.dp, if (selected) Color.Transparent else Outline, RoundedCornerShape(20.dp))
+            .interactiveClickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = label, tint = if (selected) Moss else Muted)
-        Text(label, color = if (selected) Color.White else Muted, style = MaterialTheme.typography.bodyLarge)
-    }
-}
-
-@Composable
-private fun PrimaryAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(22.dp))
-            .background(Moss)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, contentDescription = label, tint = Color.Black)
-        Text(label, color = Color.Black, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+        val tint by animateColor(selected = selected)
+        Icon(icon, contentDescription = label, tint = tint)
+        Text(label, color = if (selected) TextPrimary else Muted, style = MaterialTheme.typography.bodyLarge)
     }
 }
 
@@ -684,28 +1071,41 @@ private fun AccentAction(label: String, icon: androidx.compose.ui.graphics.vecto
         modifier = Modifier
             .clip(RoundedCornerShape(22.dp))
             .background(color.copy(alpha = 0.12f))
-            .border(1.dp, color.copy(alpha = 0.3f), RoundedCornerShape(22.dp))
-            .clickable(onClick = onClick)
+            .border(1.dp, color.copy(alpha = 0.32f), RoundedCornerShape(22.dp))
+            .pressClickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, contentDescription = label, tint = color)
-        Text(label, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+        Text(label, color = TextPrimary, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
 @Composable
-private fun AccentChip(label: String, color: Color, onClick: (() -> Unit)? = null) {
+private fun PillButton(label: String, color: Color, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(color)
+            .pressClickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Text(label, color = Color.Black, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun AccentChip(label: String, background: Color, onClick: (() -> Unit)? = null) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(22.dp))
-            .background(color.copy(alpha = 0.12f))
-            .border(1.dp, color.copy(alpha = 0.3f), RoundedCornerShape(22.dp))
-            .clickable(enabled = onClick != null) { onClick?.invoke() }
+            .background(background)
+            .border(1.dp, Outline, RoundedCornerShape(22.dp))
+            .pressClickable(enabled = onClick != null) { onClick?.invoke() }
             .padding(horizontal = 14.dp, vertical = 10.dp),
     ) {
-        Text(label, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+        Text(label, color = TextPrimary, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -714,50 +1114,43 @@ private fun MiniPanel(title: String, value: String, icon: androidx.compose.ui.gr
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(18.dp))
             .background(Panel)
-            .border(1.dp, Outline, RoundedCornerShape(20.dp))
-            .clickable(enabled = onClick != null) { onClick?.invoke() }
-            .padding(14.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+            .border(1.dp, Outline, RoundedCornerShape(18.dp))
+            .pressClickable(enabled = onClick != null) { onClick?.invoke() }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(modifier = Modifier.size(42.dp).clip(CircleShape).background(accent.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.size(34.dp).clip(CircleShape).background(accent.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription = null, tint = accent)
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = Muted, style = MaterialTheme.typography.labelMedium)
-            Text(value, color = Color.White, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(title, color = Muted, style = MaterialTheme.typography.labelSmall)
+            Text(value, color = TextPrimary, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }
 
 @Composable
-private fun PanelText(title: String, body: String) {
-    Surface(shape = RoundedCornerShape(22.dp), color = Panel) {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title.uppercase(), color = Gold, style = MaterialTheme.typography.labelMedium)
-            Text(body, color = Color.White, style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-
-@Composable
-private fun SectionTitle(title: String) {
-    Text(title, color = Color.White, style = MaterialTheme.typography.titleLarge)
-}
-
-@Composable
-private fun ArtworkBadge(label: String, color: Color) {
-    Box(modifier = Modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).background(color), contentAlignment = Alignment.Center) {
-        Text(label, color = Color.Black, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
+private fun ArtworkBadge(label: String, color: Color, compact: Boolean = false) {
+    val size = if (compact) 42.dp else 52.dp
+    val corner = if (compact) 14.dp else 16.dp
+    Box(modifier = Modifier.size(size).clip(RoundedCornerShape(corner)).background(color), contentAlignment = Alignment.Center) {
+        Text(
+            label,
+            color = Color.Black,
+            fontWeight = FontWeight.Black,
+            style = if (compact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
+            maxLines = 1,
+        )
     }
 }
 
 @Composable
 private fun RecordHalo(modifier: Modifier = Modifier) {
     Canvas(modifier = modifier.size(180.dp)) {
-        drawCircle(Color(0x18FFFFFF), radius = size.minDimension / 2)
+        drawCircle(Color(0x15FFFFFF), radius = size.minDimension / 2)
         drawCircle(Color(0x22000000), radius = size.minDimension / 2.6f)
         drawCircle(Moss.copy(alpha = 0.25f), radius = size.minDimension / 5.2f)
         drawCircle(Color(0xFF0D0F0E), radius = size.minDimension / 7.5f)
@@ -770,20 +1163,20 @@ private fun RoundAction(icon: androidx.compose.ui.graphics.vector.ImageVector, a
         modifier = Modifier
             .size(46.dp)
             .clip(CircleShape)
-            .background(if (active) Moss.copy(alpha = 0.18f) else PanelAlt)
+            .background(if (active) Moss.copy(alpha = 0.16f) else PanelRaised)
             .border(1.dp, if (active) Moss.copy(alpha = 0.4f) else Outline, CircleShape)
-            .clickable(onClick = onClick),
+            .interactiveClickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = if (active) Moss else Color.White)
+        Icon(icon, contentDescription = null, tint = if (active) Moss else TextPrimary)
     }
 }
 
 @Composable
 private fun AmbientGlow() {
     Canvas(modifier = Modifier.fillMaxSize()) {
-        drawCircle(brush = Brush.radialGradient(listOf(Moss.copy(alpha = 0.12f), Color.Transparent)), radius = 420f, center = Offset(size.width * 0.72f, size.height * 0.12f))
-        drawCircle(brush = Brush.radialGradient(listOf(Gold.copy(alpha = 0.08f), Color.Transparent)), radius = 360f, center = Offset(size.width * 0.15f, size.height * 0.86f))
+        drawCircle(brush = Brush.radialGradient(listOf(Moss.copy(alpha = 0.10f), Color.Transparent)), radius = 440f, center = Offset(size.width * 0.72f, size.height * 0.12f))
+        drawCircle(brush = Brush.radialGradient(listOf(Gold.copy(alpha = 0.08f), Color.Transparent)), radius = 360f, center = Offset(size.width * 0.14f, size.height * 0.82f))
     }
 }
 
@@ -800,7 +1193,243 @@ private fun formatDuration(durationMs: Long): String {
     return "%02d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
 
-private fun buildLibraryStatusText(state: DesktopUiState): String {
-    val roots = if (state.libraryRoots.isEmpty()) "No roots configured" else state.libraryRoots.joinToString("\n")
-    return "${state.libraryStatus}\n\nRoots:\n$roots"
+private fun buildLibraryStatusText(state: DesktopUiState, strings: DesktopStrings): String {
+    val roots = if (state.libraryRoots.isEmpty()) strings.noRootsConfigured else state.libraryRoots.joinToString("\n")
+    return "${state.libraryStatus}\n\n${strings.rootsHeader}\n$roots"
+}
+
+private fun Modifier.pressClickable(
+    enabled: Boolean = true,
+    pressedScale: Float = 0.97f,
+    onClick: () -> Unit,
+): Modifier = composed {
+    interactiveClickable(enabled = enabled, pressedScale = pressedScale, hoverScale = 1f, onClick = onClick)
+}
+
+private fun Modifier.interactiveClickable(
+    enabled: Boolean = true,
+    pressedScale: Float = 0.97f,
+    hoverScale: Float = 1.012f,
+    onClick: () -> Unit,
+): Modifier = composed {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val hovered by interactionSource.collectIsHoveredAsState()
+    val scaleTarget = when {
+        pressed -> pressedScale
+        hovered -> hoverScale
+        else -> 1f
+    }
+    val scale by animateFloatAsState(scaleTarget, animationSpec = spring(stiffness = Spring.StiffnessMediumLow), label = "interaction-scale")
+    val alpha by animateFloatAsState(if (hovered) 1f else 0.98f, animationSpec = tween(140), label = "interaction-alpha")
+    graphicsLayer(
+        scaleX = scale,
+        scaleY = scale,
+        alpha = alpha,
+    )
+        .hoverable(interactionSource = interactionSource, enabled = enabled)
+        .clickable(
+            interactionSource = interactionSource,
+            indication = null,
+            enabled = enabled,
+            onClick = onClick,
+        )
+}
+
+@Composable
+private fun PlaybackVisualizer(
+    state: PlaybackVisualizerState,
+    modifier: Modifier,
+    accent: Color,
+    dense: Boolean,
+) {
+    val transition = rememberInfiniteTransition(label = "visualizer-idle")
+    val idlePhase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800),
+        ),
+        label = "visualizer-idle-phase",
+    )
+    val animatedBands = state.bands.mapIndexed { index, band ->
+        animateFloatAsState(
+            targetValue = if (state.active) band else idleValue(index, idlePhase, dense),
+            animationSpec = spring(stiffness = Spring.StiffnessLow, dampingRatio = Spring.DampingRatioMediumBouncy),
+            label = "band-$index",
+        ).value
+    }
+
+    Canvas(modifier = modifier) {
+        val bands = if (animatedBands.isEmpty()) List(if (dense) 32 else 24) { 0f } else animatedBands
+        val gap = if (dense) 5f else 7f
+        val barWidth = ((size.width - gap * (bands.size - 1)) / bands.size).coerceAtLeast(3f)
+        bands.forEachIndexed { index, value ->
+            val normalized = value.coerceIn(0f, 1f)
+            val barHeight = (size.height * (0.18f + normalized * 0.82f)).coerceAtLeast(size.height * 0.12f)
+            val left = index * (barWidth + gap)
+            drawRoundRect(
+                brush = Brush.verticalGradient(
+                    listOf(
+                        accent.copy(alpha = 0.18f + normalized * 0.25f),
+                        accent.copy(alpha = 0.68f + normalized * 0.2f),
+                    ),
+                ),
+                topLeft = Offset(left, size.height - barHeight),
+                size = Size(barWidth, barHeight),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth / 2, barWidth / 2),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlaybackTimeline(
+    positionMs: Long,
+    durationMs: Long,
+    accent: Color,
+    onSeek: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val safeDuration = durationMs.coerceAtLeast(0L)
+    val safePosition = clampTimelinePosition(positionMs, safeDuration)
+    val progress = if (safeDuration > 0L) (safePosition.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f) else 0f
+    var sliderPositionMs by remember(safePosition, safeDuration) { mutableStateOf(safePosition.toFloat()) }
+    var dragging by remember { mutableStateOf(false) }
+    val displayedProgress = if (safeDuration > 0L) {
+        ((if (dragging) sliderPositionMs else safePosition.toFloat()) / safeDuration.toFloat()).coerceIn(0f, 1f)
+    } else {
+        progress
+    }
+    val animatedProgress by animateFloatAsState(
+        targetValue = displayedProgress,
+        animationSpec = tween(180),
+        label = "timeline-progress",
+    )
+
+    LaunchedEffect(safePosition, safeDuration, dragging) {
+        if (!dragging) {
+            sliderPositionMs = safePosition.toFloat()
+        }
+    }
+
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Slider(
+            value = if (dragging) sliderPositionMs else safePosition.toFloat(),
+            onValueChange = { nextValue ->
+                dragging = true
+                sliderPositionMs = nextValue.coerceIn(0f, safeDuration.coerceAtLeast(1L).toFloat())
+            },
+            onValueChangeFinished = {
+                dragging = false
+                onSeek(clampTimelinePosition(sliderPositionMs.roundToLong(), safeDuration))
+            },
+            valueRange = 0f..safeDuration.coerceAtLeast(1L).toFloat(),
+            enabled = safeDuration > 0L,
+            colors = SliderDefaults.colors(
+                thumbColor = Color.White.copy(alpha = 0.92f),
+                activeTrackColor = accent,
+                inactiveTrackColor = PanelRaised,
+                activeTickColor = Color.Transparent,
+                inactiveTickColor = Color.Transparent,
+                disabledThumbColor = Muted,
+                disabledActiveTrackColor = accent.copy(alpha = 0.32f),
+                disabledInactiveTrackColor = PanelRaised,
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(18.dp)
+                .focusable(enabled = safeDuration > 0L)
+                .onPreviewKeyEvent { event ->
+                    if (safeDuration <= 0L || event.type != KeyEventType.KeyDown) {
+                        return@onPreviewKeyEvent false
+                    }
+                    val step = timelineKeyboardStepMs(safeDuration)
+                    when (event.key) {
+                        Key.DirectionLeft -> {
+                            onSeek(clampTimelinePosition(safePosition - step, safeDuration))
+                            true
+                        }
+                        Key.DirectionRight -> {
+                            onSeek(clampTimelinePosition(safePosition + step, safeDuration))
+                            true
+                        }
+                        else -> false
+                    }
+                },
+            thumb = { _ ->
+                Box(
+                    modifier = Modifier
+                        .size(14.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.96f))
+                        .border(1.dp, accent.copy(alpha = 0.42f), CircleShape),
+                )
+            },
+            track = { _ ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(10.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(PanelRaised)
+                        .border(1.dp, Outline, RoundedCornerShape(999.dp)),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(animatedProgress.coerceIn(0f, 1f))
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(
+                                        accent.copy(alpha = 0.58f),
+                                        accent,
+                                        Color.White.copy(alpha = 0.88f),
+                                    ),
+                                ),
+                            ),
+                    )
+                }
+            },
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(formatDuration(safePosition), color = accent.copy(alpha = 0.95f), style = MaterialTheme.typography.labelMedium)
+            Text(formatDuration(safeDuration), color = Muted, style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
+
+internal fun clampTimelinePosition(positionMs: Long, durationMs: Long): Long {
+    val safeDuration = durationMs.coerceAtLeast(0L)
+    val upperBound = safeDuration.takeIf { it > 0L } ?: positionMs.coerceAtLeast(0L)
+    return positionMs.coerceIn(0L, upperBound)
+}
+
+internal fun useCompactPlayerLayout(widthDp: Int): Boolean = widthDp < 960
+
+internal fun useCompactTrackRowLayout(widthDp: Int): Boolean = widthDp < 760
+
+internal fun timelineKeyboardStepMs(durationMs: Long): Long =
+    (durationMs / 24L).coerceIn(3_000L, 12_000L)
+
+private fun idleValue(index: Int, phase: Float, dense: Boolean): Float {
+    val seed = if (dense) 0.22f else 0.16f
+    val wave = kotlin.math.sin((phase * 6.28318f) + index * 0.45f).toFloat()
+    return (seed + (wave + 1f) * 0.08f).coerceIn(0f, 0.35f)
+}
+
+@Composable
+private fun animateColor(selected: Boolean): androidx.compose.runtime.State<Color> {
+    val progress by animateFloatAsState(
+        targetValue = if (selected) 1f else 0f,
+        animationSpec = tween(180),
+        label = "nav-color-progress",
+    )
+    return remember(progress) { mutableStateOf(lerp(Muted, Moss, progress)) }
 }

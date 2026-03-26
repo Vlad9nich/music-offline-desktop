@@ -10,8 +10,8 @@ import kotlinx.serialization.json.Json
 import java.io.DataOutputStream
 import java.io.File
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.SocketTimeoutException
-import java.net.URL
 
 class WindowsOcrClient : OcrImportClient {
     private val json = Json { ignoreUnknownKeys = true }
@@ -114,7 +114,7 @@ class WindowsOcrClient : OcrImportClient {
     }
 
     private fun openConnection(url: String, authToken: String): HttpURLConnection {
-        return (URL(url).openConnection() as HttpURLConnection).apply {
+        return (URI.create(url).toURL().openConnection() as HttpURLConnection).apply {
             connectTimeout = 30_000
             readTimeout = 180_000
             doInput = true

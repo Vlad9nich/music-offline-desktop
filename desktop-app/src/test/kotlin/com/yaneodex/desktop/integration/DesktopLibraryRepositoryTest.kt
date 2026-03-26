@@ -15,7 +15,10 @@ class DesktopLibraryRepositoryTest {
             File(root, "notes.txt").writeText("ignore")
 
             val storage = File(root, "library.json")
-            val repository = DesktopLibraryRepository(storage)
+            val repository = DesktopLibraryRepository(
+                storageFile = storage,
+                configuredDefaultRoots = listOf(root.absolutePath),
+            )
             val stored = repository.importRoots(listOf(root.absolutePath))
 
             assertEquals(1, stored.snapshot.tracks.size)
@@ -32,7 +35,10 @@ class DesktopLibraryRepositoryTest {
         val root = createTempDirectory("yaneodex-playlists").toFile()
         try {
             val storage = File(root, "library.json")
-            val repository = DesktopLibraryRepository(storage)
+            val repository = DesktopLibraryRepository(
+                storageFile = storage,
+                configuredDefaultRoots = listOf(root.absolutePath),
+            )
 
             val created = repository.createPlaylist("Road Mix")
             val createdPlaylist = created.snapshot.playlists.firstOrNull { it.name == "Road Mix" }
@@ -51,7 +57,10 @@ class DesktopLibraryRepositoryTest {
         try {
             File(root, "Artist - Track.mp3").writeBytes(byteArrayOf(1, 2, 3))
             val storage = File(root, "library.json")
-            val repository = DesktopLibraryRepository(storage)
+            val repository = DesktopLibraryRepository(
+                storageFile = storage,
+                configuredDefaultRoots = listOf(root.absolutePath),
+            )
             val imported = repository.importRoots(listOf(root.absolutePath))
 
             val playlist = repository.createPlaylist("Inbox").snapshot.playlists.first { it.name == "Inbox" }

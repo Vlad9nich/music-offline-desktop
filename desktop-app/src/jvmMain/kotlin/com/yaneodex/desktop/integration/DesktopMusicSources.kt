@@ -8,13 +8,22 @@ import com.yaneodex.core.model.SourceDescriptor
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.net.URL
+import java.net.URI
 import java.net.URLEncoder
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
+import java.time.Duration
 
 abstract class HtmlMusicSourceTemplate(
     override val descriptor: SourceDescriptor,
 ) : MusicSource {
+    private val httpClient: HttpClient = HttpClient.newBuilder()
+        .followRedirects(HttpClient.Redirect.NORMAL)
+        .connectTimeout(Duration.ofSeconds(15))
+        .build()
+
     override suspend fun search(query: String): List<RemoteTrackCandidate> {
         if (query.isBlank()) return emptyList()
         return mapSearchDocument(requestDocument(buildSearchUrl(query.trim())))
@@ -28,14 +37,23 @@ abstract class HtmlMusicSourceTemplate(
     protected abstract fun mapSearchDocument(document: Document): List<RemoteTrackCandidate>
     protected abstract fun mapTrackDetails(track: RemoteTrackCandidate, document: Document): DownloadBlueprint
 
-    protected fun requestDocument(url: String, referer: String? = null): Document = Jsoup.connect(url)
-        .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 YaNeoDexDesktop/0.1")
-        .referrer(referer ?: DEFAULT_REFERER)
-        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-        .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-        .timeout(15_000)
-        .followRedirects(true)
-        .get()
+    protected fun requestDocument(url: String, referer: String? = null): Document {
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .timeout(Duration.ofSeconds(15))
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 YaNeoDexDesktop/0.1")
+            .header("Referer", referer ?: DEFAULT_REFERER)
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+            .GET()
+            .build()
+
+        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+        require(response.statusCode() in 200..299) {
+            "Parser HTTP ${response.statusCode()}: ${response.body().take(160)}"
+        }
+        return Jsoup.parse(response.body(), url)
+    }
 
     protected fun Element.textOrEmpty(selector: String): String = selectFirst(selector)?.text()?.trim().orEmpty()
 
@@ -162,7 +180,7 @@ class LigaudioSource : HtmlMusicSourceTemplate(
         return when {
             trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
             trimmed.startsWith("//") -> "https:$trimmed"
-            else -> URL(URL(baseUrl), trimmed).toString()
+            else -> URI.create(baseUrl).resolve(trimmed).toString()
         }
     }
 

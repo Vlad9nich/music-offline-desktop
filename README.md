@@ -14,13 +14,14 @@ Standalone Windows-first desktop repository for YaNeoDex.
     - `MusicSourceCatalog` / `MusicSource`
     - `OcrImportClient`
 - `desktop-app` module:
-  - Compose Desktop UI with Spotify-like desktop composition
+  - Compose Desktop UI with Spotify-inspired desktop composition
   - real local library scan from selected disk folders
   - metadata extraction (title/artist/duration) from audio files
   - real Windows playback backend (JavaFX Media)
   - remote parser search/resolve (Ligaudio)
   - OCR playlist import (`/v1/ocr-image`, `/v1/playlist-import/jobs/...`)
   - playlist create/rename/add/remove flows
+  - RU default UI with RU/EN language switch
   - state persistence to `%USERPROFILE%\.yaneodex-desktop`
 
 ## Tech stack
@@ -41,13 +42,16 @@ Standalone Windows-first desktop repository for YaNeoDex.
 
 ## Quickstart (Windows)
 
-1. Install JDK 21 and ensure `JAVA_HOME` points to it.
+1. Install JDK 21.
 2. Copy `.env.example` to `.env` and set values as needed.
 3. Run app:
 
 ```powershell
 .\scripts\run.ps1
 ```
+
+Scripts auto-detect JDK 21 and will also use Android Studio bundled `jbr` when it is available locally.
+Installer packaging still requires a full JDK 21 with `jpackage.exe`.
 
 ## Build/Test/Package profiles
 
@@ -80,6 +84,10 @@ Desktop client expects OCR candidates in this shape:
 
 ## Troubleshooting
 
+- `Build fails on JDK 25+`:
+  - use the provided `scripts/*.ps1`; they switch to JDK 21 automatically when possible.
+- `package.ps1` stops before Gradle starts:
+  - install a full JDK 21 with `jpackage.exe`; Android Studio bundled `jbr` is enough for build/test/run, but not for MSI/EXE packaging.
 - `SDK location not found`:
   - This desktop repo does not need Android SDK; run commands from this repository only.
 - `Playback failed`:

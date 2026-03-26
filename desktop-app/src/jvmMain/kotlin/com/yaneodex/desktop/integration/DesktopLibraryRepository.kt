@@ -51,7 +51,7 @@ class DesktopLibraryRepository(
             name = trimmed,
             artworkHint = trimmed.take(2).uppercase().padEnd(2, ' ').trim(),
             tone = playlistTone(current.snapshot.playlists.size),
-            description = "Created on Windows desktop.",
+            description = "",
             trackIds = emptyList(),
             createdAtEpochMs = System.currentTimeMillis(),
         )
@@ -121,7 +121,7 @@ class DesktopLibraryRepository(
                 name = "All Tracks",
                 artworkHint = "AT",
                 tone = "#95F15A",
-                description = "All playable tracks discovered on this Windows machine.",
+                description = "",
                 trackIds = tracks.map { it.id },
                 createdAtEpochMs = System.currentTimeMillis(),
             ),

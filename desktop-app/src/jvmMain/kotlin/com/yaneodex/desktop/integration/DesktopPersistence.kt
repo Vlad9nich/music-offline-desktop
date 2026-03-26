@@ -3,6 +3,7 @@ package com.yaneodex.desktop.integration
 import com.yaneodex.core.state.DesktopSection
 import com.yaneodex.core.state.DesktopUiState
 import com.yaneodex.core.state.OcrSettings
+import com.yaneodex.core.state.AppLanguage
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -27,6 +28,7 @@ class DesktopPersistence(
             selectedSection = state.selectedSection,
             selectedPlaylistId = state.selectedPlaylistId,
             currentTrackId = state.currentTrackId,
+            language = state.language,
             shuffleEnabled = state.shuffleEnabled,
             searchQuery = state.searchQuery,
             highlightedTag = state.highlightedTag,
@@ -49,6 +51,7 @@ class DesktopPersistence(
             selectedSection = persisted.selectedSection,
             selectedPlaylistId = playlistId,
             currentTrackId = currentTrackId,
+            language = persisted.language,
             shuffleEnabled = persisted.shuffleEnabled,
             searchQuery = persisted.searchQuery,
             highlightedTag = persisted.highlightedTag,
@@ -65,6 +68,7 @@ data class PersistedDesktopState(
     val selectedSection: DesktopSection = DesktopSection.HOME,
     val selectedPlaylistId: String = "library-all",
     val currentTrackId: String? = null,
+    val language: AppLanguage = AppLanguage.RU,
     val shuffleEnabled: Boolean = false,
     val searchQuery: String = "",
     val highlightedTag: String = "Night Drive",

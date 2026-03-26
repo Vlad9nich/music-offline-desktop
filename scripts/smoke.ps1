@@ -1,6 +1,9 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "Use-Jdk21.ps1")
+Initialize-YaneodexJavaHome
+
 Push-Location (Join-Path $PSScriptRoot "..")
 try {
     Write-Host "1) Run unit/integration tests"

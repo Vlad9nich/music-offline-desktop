@@ -1,0 +1,1 @@
+Before claiming completion, run at least the relevant fast loop on Windows: .\\gradlew.bat :desktop-app:compileKotlin --console=plain, .\\gradlew.bat :desktop-app:test --console=plain, and usually .\\scripts\\build.ps1. Avoid packaging on every small change; reserve .\\scripts\\package.ps1 or packageReleaseMsi for installer/runtime changes.
