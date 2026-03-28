@@ -15,6 +15,8 @@ class JavaFxPlaybackBackend : PlaybackBackend {
     private var queue: List<TrackRecord> = emptyList()
     private var currentIndex: Int = -1
     private var mediaPlayer: MediaPlayer? = null
+    private var volume: Float = 0.72f
+    private var playbackSessionId: Long = 0L
 
     override fun playQueue(
         queue: List<TrackRecord>,
@@ -41,12 +43,13 @@ class JavaFxPlaybackBackend : PlaybackBackend {
                             currentTrackId = queue.getOrNull(currentIndex)?.id,
                             isPlaying = false,
                             visualizer = PlaybackVisualizerState.idle(),
-                            positionMs = player.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: 0L,
-                            durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong()
-                                ?: queue.getOrNull(currentIndex)?.durationMs
-                                ?: 0L,
-                        ),
-                    )
+                        positionMs = player.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: 0L,
+                        durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong()
+                            ?: queue.getOrNull(currentIndex)?.durationMs
+                            ?: 0L,
+                        volume = volume,
+                    ),
+                )
                 }
                 else -> {
                     player.play()
@@ -54,12 +57,13 @@ class JavaFxPlaybackBackend : PlaybackBackend {
                         PlaybackSnapshot(
                             currentTrackId = queue.getOrNull(currentIndex)?.id,
                             isPlaying = true,
-                            positionMs = player.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: 0L,
-                            durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong()
-                                ?: queue.getOrNull(currentIndex)?.durationMs
-                                ?: 0L,
-                        ),
-                    )
+                        positionMs = player.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: 0L,
+                        durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong()
+                            ?: queue.getOrNull(currentIndex)?.durationMs
+                            ?: 0L,
+                        volume = volume,
+                    ),
+                )
                 }
             }
         }
@@ -91,6 +95,27 @@ class JavaFxPlaybackBackend : PlaybackBackend {
                     isPlaying = player.status == MediaPlayer.Status.PLAYING,
                     positionMs = targetMs,
                     durationMs = durationMs,
+                    volume = volume,
+                ),
+            )
+        }
+    }
+
+    override fun setVolume(volume: Float, onState: (PlaybackSnapshot) -> Unit) {
+        this.volume = volume.coerceIn(0f, 1f)
+        runOnFxThread {
+            mediaPlayer?.volume = this.volume.toDouble()
+            val player = mediaPlayer
+            onState(
+                PlaybackSnapshot(
+                    currentTrackId = queue.getOrNull(currentIndex)?.id,
+                    isPlaying = player?.status == MediaPlayer.Status.PLAYING,
+                    visualizer = if (player?.status == MediaPlayer.Status.PLAYING) null else PlaybackVisualizerState.idle(),
+                    positionMs = player?.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: 0L,
+                    durationMs = player?.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong()
+                        ?: queue.getOrNull(currentIndex)?.durationMs
+                        ?: 0L,
+                    volume = this.volume,
                 ),
             )
         }
@@ -98,6 +123,7 @@ class JavaFxPlaybackBackend : PlaybackBackend {
 
     override fun stop() {
         runOnFxThread {
+            playbackSessionId += 1L
             mediaPlayer?.stop()
             mediaPlayer?.dispose()
             mediaPlayer = null
@@ -111,23 +137,29 @@ class JavaFxPlaybackBackend : PlaybackBackend {
             return
         }
         runOnFxThread {
+            playbackSessionId += 1L
+            val sessionId = playbackSessionId
             mediaPlayer?.stop()
             mediaPlayer?.dispose()
             val player = MediaPlayer(Media(track.uri))
+            player.volume = volume.toDouble()
             player.audioSpectrumNumBands = 32
             player.audioSpectrumInterval = 0.05
             player.audioSpectrumThreshold = -70
             player.currentTimeProperty().addListener { _, _, currentTime ->
+                if (sessionId != playbackSessionId || mediaPlayer !== player) return@addListener
                 onState(
                     PlaybackSnapshot(
                         currentTrackId = track.id,
                         isPlaying = player.status == MediaPlayer.Status.PLAYING,
                         positionMs = currentTime.toMillis().toLong().coerceAtLeast(0L),
                         durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong() ?: track.durationMs,
+                        volume = volume,
                     ),
                 )
             }
             player.setAudioSpectrumListener { _, _, magnitudes, _ ->
+                if (sessionId != playbackSessionId || mediaPlayer !== player) return@setAudioSpectrumListener
                 val reactiveBands = magnitudes.mapIndexed { index, magnitude ->
                     val normalized = ((magnitude + 70f) / 70f).coerceIn(0f, 1f)
                     val bassBias = when {
@@ -154,11 +186,13 @@ class JavaFxPlaybackBackend : PlaybackBackend {
                         ),
                         positionMs = player.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: 0L,
                         durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong() ?: track.durationMs,
+                        volume = volume,
                     ),
                 )
             }
             mediaPlayer = player
             player.setOnReady {
+                if (sessionId != playbackSessionId || mediaPlayer !== player) return@setOnReady
                 player.play()
                 onState(
                     PlaybackSnapshot(
@@ -167,10 +201,12 @@ class JavaFxPlaybackBackend : PlaybackBackend {
                         visualizer = PlaybackVisualizerState.idle(32).copy(active = true),
                         positionMs = 0L,
                         durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong() ?: track.durationMs,
+                        volume = volume,
                     ),
                 )
             }
             player.setOnEndOfMedia {
+                if (sessionId != playbackSessionId || mediaPlayer !== player) return@setOnEndOfMedia
                 if (currentIndex < queue.lastIndex) {
                     currentIndex += 1
                     playCurrent(onState)
@@ -182,11 +218,13 @@ class JavaFxPlaybackBackend : PlaybackBackend {
                             visualizer = PlaybackVisualizerState.idle(32),
                             positionMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong() ?: track.durationMs,
                             durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong() ?: track.durationMs,
+                            volume = volume,
                         ),
                     )
                 }
             }
             player.setOnError {
+                if (sessionId != playbackSessionId || mediaPlayer !== player) return@setOnError
                 onState(
                     PlaybackSnapshot(
                         currentTrackId = track.id,
@@ -195,6 +233,7 @@ class JavaFxPlaybackBackend : PlaybackBackend {
                         visualizer = PlaybackVisualizerState.idle(32),
                         positionMs = player.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: 0L,
                         durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong() ?: track.durationMs,
+                        volume = volume,
                     ),
                 )
             }

@@ -222,12 +222,86 @@ class DesktopMusicSourceCatalog(
 
     override suspend fun search(query: String): List<RemoteTrackCandidate> {
         if (query.isBlank()) return emptyList()
-        return sources.filter { it.descriptor.isEnabled }.flatMap { source -> source.search(query) }
+        val normalizedQuery = normalizeSearchText(query)
+        val queryTokens = normalizedQuery.split(' ').filter { it.isNotBlank() }
+        return sources
+            .filter { it.descriptor.isEnabled }
+            .flatMap { source -> source.search(query) }
+            .mapNotNull { candidate ->
+                val score = scoreCandidate(candidate, normalizedQuery, queryTokens)
+                candidate.takeIf { score > 0 }
+                    ?.let { score to it }
+            }
+            .sortedWith(
+                compareByDescending<Pair<Int, RemoteTrackCandidate>> { it.first }
+                    .thenBy { it.second.artist.lowercase() }
+                    .thenBy { it.second.title.lowercase() },
+            )
+            .map { it.second }
     }
 
     override suspend fun resolve(track: RemoteTrackCandidate): DownloadBlueprint {
         val source = sources.firstOrNull { it.descriptor.id == track.sourceId }
             ?: error("Source ${track.sourceId} not found.")
         return source.resolve(track)
+    }
+
+    internal fun rankResults(query: String, results: List<RemoteTrackCandidate>): List<RemoteTrackCandidate> {
+        val normalizedQuery = normalizeSearchText(query)
+        val queryTokens = normalizedQuery.split(' ').filter { it.isNotBlank() }
+        return results
+            .mapNotNull { candidate ->
+                val score = scoreCandidate(candidate, normalizedQuery, queryTokens)
+                candidate.takeIf { score > 0 }?.let { score to it }
+            }
+            .sortedWith(
+                compareByDescending<Pair<Int, RemoteTrackCandidate>> { it.first }
+                    .thenBy { it.second.artist.lowercase() }
+                    .thenBy { it.second.title.lowercase() },
+            )
+            .map { it.second }
+    }
+
+    private fun scoreCandidate(
+        candidate: RemoteTrackCandidate,
+        normalizedQuery: String,
+        queryTokens: List<String>,
+    ): Int {
+        if (normalizedQuery.isBlank() || queryTokens.isEmpty()) return 0
+
+        val normalizedArtist = normalizeSearchText(candidate.artist)
+        val normalizedTitle = normalizeSearchText(candidate.title)
+        val combined = "$normalizedArtist $normalizedTitle".trim()
+        if (combined.isBlank()) return 0
+
+        val artistContainsWholeQuery = normalizedArtist.contains(normalizedQuery)
+        val titleContainsWholeQuery = normalizedTitle.contains(normalizedQuery)
+        val combinedContainsWholeQuery = combined.contains(normalizedQuery)
+        val matchedTokens = queryTokens.count { token ->
+            normalizedArtist.contains(token) || normalizedTitle.contains(token)
+        }
+        if (!combinedContainsWholeQuery && matchedTokens == 0) return 0
+
+        var score = 0
+        if (artistContainsWholeQuery) score += 140
+        if (titleContainsWholeQuery) score += 120
+        if (combinedContainsWholeQuery) score += 80
+        score += matchedTokens * 28
+
+        if (queryTokens.size > 1 && matchedTokens == queryTokens.size) {
+            score += 60
+        }
+        if (normalizedArtist == normalizedQuery) score += 70
+        if (normalizedTitle == normalizedQuery) score += 60
+
+        return score
+    }
+
+    private fun normalizeSearchText(value: String): String {
+        return value
+            .lowercase()
+            .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
     }
 }

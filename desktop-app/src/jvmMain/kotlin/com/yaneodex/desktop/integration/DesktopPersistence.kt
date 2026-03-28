@@ -30,6 +30,7 @@ class DesktopPersistence(
             currentTrackId = state.currentTrackId,
             language = state.language,
             shuffleEnabled = state.shuffleEnabled,
+            playbackVolume = state.playbackVolume,
             searchQuery = state.searchQuery,
             highlightedTag = state.highlightedTag,
             ocrSettings = state.ocrSettings,
@@ -53,8 +54,9 @@ class DesktopPersistence(
             currentTrackId = currentTrackId,
             language = persisted.language,
             shuffleEnabled = persisted.shuffleEnabled,
+            playbackVolume = persisted.playbackVolume.coerceIn(0f, 1f),
             searchQuery = persisted.searchQuery,
-            highlightedTag = persisted.highlightedTag,
+            highlightedTag = persisted.highlightedTag.takeIf { it.isNotBlank() } ?: base.highlightedTag,
             ocrSettings = persisted.ocrSettings,
             spotlight = base.snapshot.playlists.firstOrNull { it.id == playlistId }?.let {
                 base.spotlight.copy(title = it.name, subtitle = it.description, accent = it.tone)
@@ -70,7 +72,8 @@ data class PersistedDesktopState(
     val currentTrackId: String? = null,
     val language: AppLanguage = AppLanguage.RU,
     val shuffleEnabled: Boolean = false,
+    val playbackVolume: Float = 0.72f,
     val searchQuery: String = "",
-    val highlightedTag: String = "Night Drive",
+    val highlightedTag: String = "",
     val ocrSettings: OcrSettings = OcrSettings(),
 )

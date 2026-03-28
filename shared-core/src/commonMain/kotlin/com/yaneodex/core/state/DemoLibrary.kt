@@ -30,6 +30,7 @@ object DemoLibrary {
             visualizer = PlaybackVisualizerState.idle(),
             playbackPositionMs = 0L,
             playbackDurationMs = 0L,
+            playbackVolume = 0.72f,
             shuffleEnabled = false,
             isPlaying = false,
             searchQuery = "",
@@ -46,7 +47,7 @@ object DemoLibrary {
                 subtitle = "",
                 accent = "#95F15A",
             ),
-            highlightedTag = "Night Drive",
+            highlightedTag = "",
         )
     }
 

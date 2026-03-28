@@ -42,7 +42,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "YaNeoDex Desktop"
-            packageVersion = "0.1.1"
+            packageVersion = "0.1.2"
             description = "Windows desktop client for the YaNeoDex ecosystem"
             modules(
                 "java.desktop",

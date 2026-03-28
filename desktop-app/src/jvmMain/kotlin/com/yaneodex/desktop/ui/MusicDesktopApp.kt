@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -38,8 +39,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -50,11 +52,18 @@ import androidx.compose.material.icons.automirrored.rounded.NavigateBefore
 import androidx.compose.material.icons.automirrored.rounded.NavigateNext
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.automirrored.rounded.VolumeDown
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
@@ -97,6 +106,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.unit.IntOffset
 import com.yaneodex.core.importer.MatchedTrackCandidate
 import com.yaneodex.core.importer.ScreenshotImportItemStatus
 import com.yaneodex.core.model.PlaylistRecord
@@ -106,6 +120,7 @@ import com.yaneodex.core.state.AppLanguage
 import com.yaneodex.core.state.DesktopSection
 import com.yaneodex.core.state.DesktopUiState
 import com.yaneodex.core.state.PlaybackVisualizerState
+import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
 private val Panel = Color(0xFF111313)
@@ -128,22 +143,43 @@ private data class LayoutMetrics(
     val compact: Boolean,
 )
 
+private sealed interface PlaylistEditorMode {
+    data object Create : PlaylistEditorMode
+    data class Edit(val playlistId: String) : PlaylistEditorMode
+}
+
+private data class TrackActionSpec(
+    val label: String,
+    val onClick: (String) -> Unit,
+)
+
+private data class TrackBulkActionSpec(
+    val label: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val accent: Color,
+    val onClick: (List<String>) -> Unit,
+)
+
 @Composable
 fun MusicDesktopApp(
     state: DesktopUiState,
     onSelectSection: (DesktopSection) -> Unit,
     onSelectPlaylist: (String) -> Unit,
     onLanguageChange: (AppLanguage) -> Unit,
-    onCreatePlaylist: (String) -> Unit,
-    onRenamePlaylist: (String) -> Unit,
+    onCreatePlaylist: (String, String) -> Unit,
+    onRenamePlaylist: (String, String, String) -> Unit,
     onPlayTrack: (String) -> Unit,
     onPlayPlaylist: () -> Unit,
     onAddTrackToPlaylist: (String) -> Unit,
+    onAddTracksToPlaylist: (List<String>) -> Unit,
     onRemoveTrackFromPlaylist: (String) -> Unit,
+    onRemoveTracksFromPlaylist: (List<String>) -> Unit,
+    onDeleteTracksFromLibrary: (List<String>) -> Unit,
     onTogglePlayPause: () -> Unit,
     onPlayNext: () -> Unit,
     onPlayPrevious: () -> Unit,
     onSeekPlayback: (Long) -> Unit,
+    onSetPlaybackVolume: (Float) -> Unit,
     onToggleShuffle: () -> Unit,
     onSearchChange: (String) -> Unit,
     onRunParserSearch: (String) -> Unit,
@@ -198,7 +234,10 @@ fun MusicDesktopApp(
                         onPlayTrack = onPlayTrack,
                         onPlayPlaylist = onPlayPlaylist,
                         onAddTrackToPlaylist = onAddTrackToPlaylist,
+                        onAddTracksToPlaylist = onAddTracksToPlaylist,
                         onRemoveTrackFromPlaylist = onRemoveTrackFromPlaylist,
+                        onRemoveTracksFromPlaylist = onRemoveTracksFromPlaylist,
+                        onDeleteTracksFromLibrary = onDeleteTracksFromLibrary,
                         onParserResultClick = onParserResultClick,
                         onParserPreview = onParserPreview,
                         onParserDownload = onParserDownload,
@@ -211,7 +250,7 @@ fun MusicDesktopApp(
                     )
                     RightRail(state, strings, metrics, onToggleShuffle, onPlayTrack)
                 }
-                BottomPlayer(state, strings, metrics, onTogglePlayPause, onPlayPrevious, onPlayNext, onSeekPlayback, onToggleShuffle)
+                BottomPlayer(state, strings, metrics, onTogglePlayPause, onPlayPrevious, onPlayNext, onSeekPlayback, onSetPlaybackVolume, onToggleShuffle)
             }
         }
     }
@@ -345,12 +384,15 @@ private fun MainColumn(
     metrics: LayoutMetrics,
     onOpenSearch: () -> Unit,
     onSelectPlaylist: (String) -> Unit,
-    onCreatePlaylist: (String) -> Unit,
-    onRenamePlaylist: (String) -> Unit,
+    onCreatePlaylist: (String, String) -> Unit,
+    onRenamePlaylist: (String, String, String) -> Unit,
     onPlayTrack: (String) -> Unit,
     onPlayPlaylist: () -> Unit,
     onAddTrackToPlaylist: (String) -> Unit,
+    onAddTracksToPlaylist: (List<String>) -> Unit,
     onRemoveTrackFromPlaylist: (String) -> Unit,
+    onRemoveTracksFromPlaylist: (List<String>) -> Unit,
+    onDeleteTracksFromLibrary: (List<String>) -> Unit,
     onParserResultClick: (RemoteTrackCandidate) -> Unit,
     onParserPreview: (RemoteTrackCandidate) -> Unit,
     onParserDownload: (RemoteTrackCandidate) -> Unit,
@@ -405,13 +447,31 @@ private fun MainColumn(
                             }
                         }
                         DesktopSection.PLAYLISTS -> {
-                            PlaylistSection(state, strings, onSelectPlaylist, onPlayTrack, onCreatePlaylist, onRenamePlaylist, onRemoveTrackFromPlaylist)
+                            PlaylistSection(
+                                state,
+                                strings,
+                                onSelectPlaylist,
+                                onPlayTrack,
+                                onCreatePlaylist,
+                                onRenamePlaylist,
+                                onRemoveTrackFromPlaylist,
+                                onRemoveTracksFromPlaylist,
+                            )
                         }
                         DesktopSection.LIBRARY -> {
                             if (state.isFirstRun) {
                                 OnboardingSection(strings, onImportLibraryFolders, onRefreshLibrary, onOpenSearch)
                             } else {
-                                LibrarySection(state, strings, onPlayTrack, onAddTrackToPlaylist, onImportLibraryFolders, onRefreshLibrary)
+                                LibrarySection(
+                                    state,
+                                    strings,
+                                    onPlayTrack,
+                                    onAddTrackToPlaylist,
+                                    onAddTracksToPlaylist,
+                                    onDeleteTracksFromLibrary,
+                                    onImportLibraryFolders,
+                                    onRefreshLibrary,
+                                )
                             }
                         }
                         DesktopSection.IMPORT -> {
@@ -537,35 +597,69 @@ private fun PlaylistSection(
     strings: DesktopStrings,
     onSelectPlaylist: (String) -> Unit,
     onPlayTrack: (String) -> Unit,
-    onCreatePlaylist: (String) -> Unit,
-    onRenamePlaylist: (String) -> Unit,
+    onCreatePlaylist: (String, String) -> Unit,
+    onRenamePlaylist: (String, String, String) -> Unit,
     onRemoveTrackFromPlaylist: (String) -> Unit,
+    onRemoveTracksFromPlaylist: (List<String>) -> Unit,
 ) {
-    var newPlaylistName by remember { mutableStateOf("") }
-    var renameValue by remember(state.selectedPlaylistId) { mutableStateOf(state.selectedPlaylist?.name.orEmpty()) }
-
-    SectionTitle(strings.sectionPlaylists)
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        TextInput(newPlaylistName, strings.createPlaylistPlaceholder, Modifier.weight(1f)) { newPlaylistName = it }
-        AccentAction(strings.createAction, Icons.AutoMirrored.Rounded.PlaylistPlay, Moss) {
-            onCreatePlaylist(newPlaylistName)
-            newPlaylistName = ""
+    var dialogMode by remember { mutableStateOf<PlaylistEditorMode?>(null) }
+    val editingPlaylist = dialogMode?.let { mode ->
+        if (mode is PlaylistEditorMode.Edit) {
+            state.snapshot.playlists.firstOrNull { it.id == mode.playlistId }
+        } else {
+            null
         }
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        TextInput(renameValue, strings.renamePlaylistPlaceholder, Modifier.weight(1f)) { renameValue = it }
-        AccentAction(strings.renameAction, Icons.Rounded.Tune, Gold) { onRenamePlaylist(renameValue) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        SectionTitle(strings.sectionPlaylists)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Spacer(Modifier.weight(1f))
+            AccentAction(strings.createAction, Icons.AutoMirrored.Rounded.PlaylistPlay, Moss) {
+                dialogMode = PlaylistEditorMode.Create
+            }
+        }
+        PlaylistColumn(
+            playlists = state.snapshot.playlists,
+            selectedPlaylistId = state.selectedPlaylistId,
+            strings = strings,
+            onSelectPlaylist = onSelectPlaylist,
+            onEditPlaylist = { playlist -> dialogMode = PlaylistEditorMode.Edit(playlist.id) },
+        )
+        SectionTitle(state.selectedPlaylist?.name ?: strings.sectionPlaylist)
+        TrackList(
+            tracks = state.selectedPlaylistTracks,
+            currentTrackId = state.currentTrackId,
+            strings = strings,
+            onPlayTrack = onPlayTrack,
+            rowActions = listOf(
+                TrackActionSpec(strings.removeAction, onRemoveTrackFromPlaylist),
+            ),
+            bulkActions = listOf(
+                TrackBulkActionSpec(strings.removeAction, Icons.Rounded.Delete, Gold, onRemoveTracksFromPlaylist),
+            ),
+        )
     }
-    PlaylistColumn(state.snapshot.playlists, state.selectedPlaylistId, onSelectPlaylist)
-    SectionTitle(state.selectedPlaylist?.name ?: strings.sectionPlaylist)
-    TrackList(
-        tracks = state.selectedPlaylistTracks,
-        currentTrackId = state.currentTrackId,
-        strings = strings,
-        onPlayTrack = onPlayTrack,
-        rowActionLabel = strings.removeAction,
-        onRowAction = onRemoveTrackFromPlaylist,
-    )
+
+    if (dialogMode != null) {
+        PlaylistEditorDialog(
+            strings = strings,
+            initialName = editingPlaylist?.name.orEmpty(),
+            initialArtworkHint = editingPlaylist?.artworkHint.orEmpty(),
+            isEditing = editingPlaylist != null,
+            onDismiss = { dialogMode = null },
+            onSubmit = { name, artworkHint ->
+                val trimmedName = name.trim()
+                if (trimmedName.isBlank()) return@PlaylistEditorDialog
+                if (editingPlaylist != null) {
+                    onRenamePlaylist(editingPlaylist.id, trimmedName, artworkHint)
+                } else {
+                    onCreatePlaylist(trimmedName, artworkHint)
+                }
+                dialogMode = null
+            },
+        )
+    }
 }
 
 @Composable
@@ -574,22 +668,32 @@ private fun LibrarySection(
     strings: DesktopStrings,
     onPlayTrack: (String) -> Unit,
     onAddTrackToPlaylist: (String) -> Unit,
+    onAddTracksToPlaylist: (List<String>) -> Unit,
+    onDeleteTracksFromLibrary: (List<String>) -> Unit,
     onImportLibraryFolders: () -> Unit,
     onRefreshLibrary: () -> Unit,
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        AccentAction(strings.addFoldersAction, Icons.Rounded.FolderOpen, Moss, onImportLibraryFolders)
-        AccentAction(strings.refreshAction, Icons.Rounded.Refresh, Gold, onRefreshLibrary)
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            AccentAction(strings.addFoldersAction, Icons.Rounded.FolderOpen, Moss, onImportLibraryFolders)
+            AccentAction(strings.refreshAction, Icons.Rounded.Refresh, Gold, onRefreshLibrary)
+        }
+        StatusCard(strings.sectionLibrary, buildLibraryStatusText(state, strings))
+        TrackList(
+            tracks = state.snapshot.tracks,
+            currentTrackId = state.currentTrackId,
+            strings = strings,
+            onPlayTrack = onPlayTrack,
+            rowActions = listOf(
+                TrackActionSpec(strings.addAction, onAddTrackToPlaylist),
+                TrackActionSpec(strings.deleteAction) { trackId -> onDeleteTracksFromLibrary(listOf(trackId)) },
+            ),
+            bulkActions = listOf(
+                TrackBulkActionSpec(strings.addAction, Icons.AutoMirrored.Rounded.PlaylistPlay, Moss, onAddTracksToPlaylist),
+                TrackBulkActionSpec(strings.deleteAction, Icons.Rounded.Delete, Coral, onDeleteTracksFromLibrary),
+            ),
+        )
     }
-    StatusCard(strings.sectionLibrary, buildLibraryStatusText(state, strings))
-    TrackList(
-        tracks = state.snapshot.tracks,
-        currentTrackId = state.currentTrackId,
-        strings = strings,
-        onPlayTrack = onPlayTrack,
-        rowActionLabel = strings.addAction,
-        onRowAction = onAddTrackToPlaylist,
-    )
 }
 
 @Composable
@@ -600,17 +704,19 @@ private fun ImportSection(
     onOcrTokenChange: (String) -> Unit,
     onPickScreenshots: () -> Unit,
 ) {
-    SectionTitle(strings.sectionOcrSettings)
-    Surface(shape = RoundedCornerShape(24.dp), color = Panel) {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            LabeledField(strings.ocrServerLabel, state.ocrSettings.serverUrl, strings.ocrServerPlaceholder, onOcrServerUrlChange)
-            LabeledField(strings.bearerTokenLabel, state.ocrSettings.authToken, strings.bearerTokenPlaceholder, onOcrTokenChange)
-            AccentAction(strings.chooseScreenshotsAction, Icons.Rounded.FolderOpen, Moss, onPickScreenshots)
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        SectionTitle(strings.sectionOcrSettings)
+        Surface(shape = RoundedCornerShape(24.dp), color = Panel) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                LabeledField(strings.ocrServerLabel, state.ocrSettings.serverUrl, strings.ocrServerPlaceholder, onOcrServerUrlChange)
+                LabeledField(strings.bearerTokenLabel, state.ocrSettings.authToken, strings.bearerTokenPlaceholder, onOcrTokenChange)
+                AccentAction(strings.chooseScreenshotsAction, Icons.Rounded.FolderOpen, Moss, onPickScreenshots)
+            }
         }
+        StatusCard(strings.sectionOcr, state.ocrStatus)
+        SectionTitle(strings.sectionImportReview)
+        ImportMatches(state.importMatches, strings)
     }
-    StatusCard(strings.sectionOcr, state.ocrStatus)
-    SectionTitle(strings.sectionImportReview)
-    ImportMatches(state.importMatches, strings)
 }
 
 @Composable
@@ -649,6 +755,7 @@ private fun BottomPlayer(
     onPlayPrevious: () -> Unit,
     onPlayNext: () -> Unit,
     onSeekPlayback: (Long) -> Unit,
+    onSetPlaybackVolume: (Float) -> Unit,
     onToggleShuffle: () -> Unit,
 ) {
     Surface(shape = RoundedCornerShape(28.dp), color = Panel) {
@@ -676,6 +783,12 @@ private fun BottomPlayer(
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                         RoundAction(Icons.Rounded.Shuffle, state.shuffleEnabled, onToggleShuffle)
+                        VolumeControl(
+                            volume = state.playbackVolume,
+                            accent = Moss,
+                            compact = true,
+                            onChange = onSetPlaybackVolume,
+                        )
                         RoundAction(Icons.AutoMirrored.Rounded.NavigateBefore, false, onPlayPrevious)
                         RoundAction(if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, true, onTogglePlayPause)
                         RoundAction(Icons.AutoMirrored.Rounded.NavigateNext, false, onPlayNext)
@@ -704,6 +817,12 @@ private fun BottomPlayer(
                         modifier = Modifier.weight(1f).padding(horizontal = 20.dp),
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        VolumeControl(
+                            volume = state.playbackVolume,
+                            accent = Moss,
+                            compact = false,
+                            onChange = onSetPlaybackVolume,
+                        )
                         RoundAction(Icons.Rounded.Shuffle, state.shuffleEnabled, onToggleShuffle)
                         RoundAction(Icons.AutoMirrored.Rounded.NavigateBefore, false, onPlayPrevious)
                         RoundAction(if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, true, onTogglePlayPause)
@@ -756,7 +875,13 @@ private fun PlaylistRow(playlists: List<PlaylistRecord>, onSelectPlaylist: (Stri
 }
 
 @Composable
-private fun PlaylistColumn(playlists: List<PlaylistRecord>, selectedPlaylistId: String, onSelectPlaylist: (String) -> Unit) {
+private fun PlaylistColumn(
+    playlists: List<PlaylistRecord>,
+    selectedPlaylistId: String,
+    strings: DesktopStrings,
+    onSelectPlaylist: (String) -> Unit,
+    onEditPlaylist: (PlaylistRecord) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         playlists.forEach { playlist ->
             Row(
@@ -773,6 +898,18 @@ private fun PlaylistColumn(playlists: List<PlaylistRecord>, selectedPlaylistId: 
                 ArtworkBadge(playlist.artworkHint, parseTone(playlist.tone))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(playlist.name, color = TextPrimary, style = MaterialTheme.typography.titleMedium)
+                }
+                if (playlist.id != "library-all") {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(PanelRaised)
+                            .border(1.dp, Outline, RoundedCornerShape(14.dp))
+                            .pressClickable { onEditPlaylist(playlist) }
+                            .padding(10.dp),
+                    ) {
+                        Icon(Icons.Rounded.Edit, contentDescription = strings.editAction, tint = TextPrimary, modifier = Modifier.size(18.dp))
+                    }
                 }
             }
         }
@@ -805,24 +942,125 @@ private fun PlaylistCard(playlist: PlaylistRecord, onClick: () -> Unit) {
 }
 
 @Composable
+private fun PlaylistEditorDialog(
+    strings: DesktopStrings,
+    initialName: String,
+    initialArtworkHint: String,
+    isEditing: Boolean,
+    onDismiss: () -> Unit,
+    onSubmit: (String, String) -> Unit,
+) {
+    var name by remember(initialName) { mutableStateOf(initialName) }
+    var artworkHint by remember(initialArtworkHint) { mutableStateOf(initialArtworkHint) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            color = Panel,
+            modifier = Modifier.widthIn(max = 520.dp),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(22.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text(
+                    if (isEditing) strings.editPlaylistDialogTitle else strings.createPlaylistDialogTitle,
+                    color = TextPrimary,
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ArtworkBadge(
+                        label = derivePlaylistArtworkHint(name, artworkHint),
+                        color = Moss,
+                    )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        LabeledField(strings.playlistNameLabel, name, strings.createPlaylistPlaceholder) { name = it }
+                        LabeledField(strings.playlistAvatarLabel, artworkHint, strings.playlistAvatarPlaceholder) {
+                            artworkHint = it.take(2)
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    SecondaryAction(strings.cancelAction, onDismiss)
+                    AccentAction(
+                        label = if (isEditing) strings.renameAction else strings.createAction,
+                        icon = if (isEditing) Icons.Rounded.Edit else Icons.AutoMirrored.Rounded.PlaylistPlay,
+                        color = if (isEditing) Gold else Moss,
+                    ) {
+                        onSubmit(name, artworkHint)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun TrackList(
     tracks: List<TrackRecord>,
     currentTrackId: String?,
     strings: DesktopStrings,
     onPlayTrack: (String) -> Unit,
-    rowActionLabel: String? = null,
-    onRowAction: ((String) -> Unit)? = null,
+    rowActions: List<TrackActionSpec> = emptyList(),
+    bulkActions: List<TrackBulkActionSpec> = emptyList(),
 ) {
+    var selectedTrackIds by remember(tracks.map { it.id }) { mutableStateOf(emptySet<String>()) }
+    val selectionEnabled = bulkActions.isNotEmpty()
+    val selectionMode = selectionEnabled && selectedTrackIds.isNotEmpty()
+
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (selectionMode) {
+            BulkSelectionBar(
+                count = selectedTrackIds.size,
+                strings = strings,
+                actions = bulkActions,
+                onApply = { action ->
+                    action.onClick(selectedTrackIds.toList())
+                    selectedTrackIds = emptySet()
+                },
+                onClear = { selectedTrackIds = emptySet() },
+            )
+        }
         tracks.forEachIndexed { index, track ->
+            val selected = track.id in selectedTrackIds
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 78.dp)
                     .clip(RoundedCornerShape(18.dp))
-                    .background(if (track.id == currentTrackId) Moss.copy(alpha = 0.08f) else Panel)
-                    .border(1.dp, if (track.id == currentTrackId) Moss.copy(alpha = 0.24f) else Outline, RoundedCornerShape(18.dp))
-                    .pressClickable { onPlayTrack(track.id) }
+                    .background(
+                        when {
+                            selected -> Gold.copy(alpha = 0.09f)
+                            track.id == currentTrackId -> Moss.copy(alpha = 0.08f)
+                            else -> Panel
+                        },
+                    )
+                    .border(
+                        1.dp,
+                        when {
+                            selected -> Gold.copy(alpha = 0.34f)
+                            track.id == currentTrackId -> Moss.copy(alpha = 0.24f)
+                            else -> Outline
+                        },
+                        RoundedCornerShape(18.dp),
+                    )
+                    .pressClickable {
+                        if (selectionMode) {
+                            selectedTrackIds = if (selected) selectedTrackIds - track.id else selectedTrackIds + track.id
+                        } else {
+                            onPlayTrack(track.id)
+                        }
+                    }
                     .padding(horizontal = 14.dp, vertical = 12.dp),
             ) {
                 val compactRow = useCompactTrackRowLayout(maxWidth.value.toInt())
@@ -832,6 +1070,14 @@ private fun TrackList(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            if (selectionEnabled) {
+                                SelectionToggleButton(
+                                    selected = selected,
+                                    onClick = {
+                                        selectedTrackIds = if (selected) selectedTrackIds - track.id else selectedTrackIds + track.id
+                                    },
+                                )
+                            }
                             ArtworkBadge(track.title.take(2).uppercase(), Moss, compact = true)
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(track.title, color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -845,8 +1091,8 @@ private fun TrackList(
                         ) {
                             Text("${index + 1}".padStart(2, '0'), color = Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(28.dp))
                             Spacer(Modifier.weight(1f))
-                            if (!rowActionLabel.isNullOrBlank() && onRowAction != null) {
-                                RowActionChip(track.id, rowActionLabel, onRowAction)
+                            rowActions.forEach { action ->
+                                RowActionChip(track.id, action.label, action.onClick)
                             }
                             Text(formatDuration(track.durationMs), color = if (track.id == currentTrackId) Moss else Muted, style = MaterialTheme.typography.labelMedium)
                         }
@@ -858,13 +1104,21 @@ private fun TrackList(
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
                         Text("${index + 1}".padStart(2, '0'), color = Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(28.dp))
+                        if (selectionEnabled) {
+                            SelectionToggleButton(
+                                selected = selected,
+                                onClick = {
+                                    selectedTrackIds = if (selected) selectedTrackIds - track.id else selectedTrackIds + track.id
+                                },
+                            )
+                        }
                         ArtworkBadge(track.title.take(2).uppercase(), Moss, compact = true)
                         Column(modifier = Modifier.weight(1f)) {
                             Text(track.title, color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(track.artist, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        if (!rowActionLabel.isNullOrBlank() && onRowAction != null) {
-                            RowActionChip(track.id, rowActionLabel, onRowAction)
+                        rowActions.forEach { action ->
+                            RowActionChip(track.id, action.label, action.onClick)
                         }
                         Text(formatDuration(track.durationMs), color = if (track.id == currentTrackId) Moss else Muted, style = MaterialTheme.typography.labelMedium)
                     }
@@ -874,6 +1128,67 @@ private fun TrackList(
         if (tracks.isEmpty()) {
             EmptyState(strings.emptyStateTitle)
         }
+    }
+}
+
+@Composable
+private fun BulkSelectionBar(
+    count: Int,
+    strings: DesktopStrings,
+    actions: List<TrackBulkActionSpec>,
+    onApply: (TrackBulkActionSpec) -> Unit,
+    onClear: () -> Unit,
+) {
+    Surface(shape = RoundedCornerShape(20.dp), color = PanelRaised) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("${strings.selectedLabel}: $count", color = Gold, style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.weight(1f))
+            actions.forEach { action ->
+                BulkActionChip(action = action) { onApply(action) }
+            }
+            SecondaryAction(strings.clearSelectionAction, onClear)
+        }
+    }
+}
+
+@Composable
+private fun BulkActionChip(action: TrackBulkActionSpec, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(action.accent.copy(alpha = 0.12f))
+            .border(1.dp, action.accent.copy(alpha = 0.32f), RoundedCornerShape(18.dp))
+            .pressClickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(action.icon, contentDescription = action.label, tint = action.accent, modifier = Modifier.size(16.dp))
+        Text(action.label, color = TextPrimary, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
+private fun SelectionToggleButton(selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(26.dp)
+            .clip(CircleShape)
+            .background(if (selected) Gold.copy(alpha = 0.18f) else PanelRaised)
+            .border(1.dp, if (selected) Gold.copy(alpha = 0.42f) else Outline, CircleShape)
+            .pressClickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            if (selected) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+            contentDescription = null,
+            tint = if (selected) Gold else Muted,
+            modifier = Modifier.size(16.dp),
+        )
     }
 }
 
@@ -906,7 +1221,7 @@ private fun ParserResults(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        results.take(8).forEach { item ->
+        results.forEach { item ->
             BoxWithConstraints {
                 val compactCard = useCompactParserCardLayout(maxWidth.value.toInt())
                 Column(
@@ -1097,6 +1412,119 @@ private fun AccentAction(label: String, icon: androidx.compose.ui.graphics.vecto
 }
 
 @Composable
+private fun SecondaryAction(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(22.dp))
+            .background(PanelRaised)
+            .border(1.dp, Outline, RoundedCornerShape(22.dp))
+            .pressClickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Text(label, color = TextPrimary, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun VolumeControl(
+    volume: Float,
+    accent: Color,
+    compact: Boolean,
+    onChange: (Float) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val normalizedVolume = volume.coerceIn(0f, 1f)
+    val animatedVolume by animateFloatAsState(
+        targetValue = normalizedVolume,
+        animationSpec = spring(stiffness = Spring.StiffnessLow, dampingRatio = Spring.DampingRatioNoBouncy),
+        label = "volume-level",
+    )
+    val percentage by animateIntAsState(
+        targetValue = (normalizedVolume * 100).roundToInt(),
+        animationSpec = tween(180),
+        label = "volume-percent",
+    )
+    val panelAlpha by animateFloatAsState(
+        targetValue = if (expanded) 1f else 0f,
+        animationSpec = tween(180),
+        label = "volume-panel-alpha",
+    )
+    val panelLift by animateDpAsState(
+        targetValue = if (expanded) 0.dp else 8.dp,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "volume-panel-lift",
+    )
+    val pulseScale by animateFloatAsState(
+        targetValue = if (expanded) 1.04f else 1f,
+        animationSpec = spring(stiffness = Spring.StiffnessLow),
+        label = "volume-button-scale",
+    )
+    val buttonShift by animateDpAsState(
+        targetValue = if (expanded) 10.dp else 0.dp,
+        animationSpec = spring(stiffness = Spring.StiffnessLow),
+        label = "volume-button-shift",
+    )
+
+    Box(
+        modifier = Modifier
+            .width(46.dp)
+            .height(46.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (expanded || panelAlpha > 0.01f) {
+            Popup(
+                alignment = Alignment.TopCenter,
+                offset = IntOffset(0, if (compact) -104 else -116),
+                properties = PopupProperties(focusable = false),
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = PanelRaised.copy(alpha = panelAlpha),
+                    modifier = Modifier
+                        .graphicsLayer {
+                            translationY = panelLift.toPx()
+                            alpha = panelAlpha
+                        }
+                        .width(if (compact) 70.dp else 94.dp),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text("$percentage%", color = accent, style = MaterialTheme.typography.labelMedium)
+                        Slider(
+                            value = animatedVolume,
+                            onValueChange = onChange,
+                            modifier = Modifier
+                                .graphicsLayer(rotationZ = -90f)
+                                .width(if (compact) 74.dp else 88.dp),
+                            colors = SliderDefaults.colors(
+                                thumbColor = accent,
+                                activeTrackColor = accent,
+                                inactiveTrackColor = Panel,
+                                activeTickColor = Color.Transparent,
+                                inactiveTickColor = Color.Transparent,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+        RoundAction(
+            icon = volumeIconFor(normalizedVolume),
+            active = normalizedVolume > 0.001f || expanded,
+            onClick = { expanded = !expanded },
+            modifier = Modifier.graphicsLayer {
+                scaleX = pulseScale
+                scaleY = pulseScale
+                translationY = buttonShift.toPx()
+            },
+        )
+    }
+}
+
+@Composable
 private fun PillButton(label: String, color: Color, onClick: () -> Unit) {
     Box(
         modifier = Modifier
@@ -1172,17 +1600,71 @@ private fun RecordHalo(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun RoundAction(icon: androidx.compose.ui.graphics.vector.ImageVector, active: Boolean, onClick: () -> Unit) {
+private fun RoundAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    active: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val hovered by interactionSource.collectIsHoveredAsState()
+    val scale by animateFloatAsState(
+        targetValue = when {
+            pressed -> 0.9f
+            hovered -> 1.05f
+            else -> 1f
+        },
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "player-button-scale",
+    )
+    val yOffset by animateDpAsState(
+        targetValue = when {
+            pressed -> 1.dp
+            hovered -> (-2).dp
+            else -> 0.dp
+        },
+        animationSpec = spring(stiffness = Spring.StiffnessLow),
+        label = "player-button-offset",
+    )
+    val glowAlpha by animateFloatAsState(
+        targetValue = when {
+            pressed -> 0.26f
+            hovered || active -> 0.18f
+            else -> 0f
+        },
+        animationSpec = tween(140),
+        label = "player-button-glow",
+    )
+
     Box(
-        modifier = Modifier
+        modifier = modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                translationY = yOffset.toPx()
+            }
             .size(46.dp)
             .clip(CircleShape)
-            .background(if (active) Moss.copy(alpha = 0.16f) else PanelRaised)
-            .border(1.dp, if (active) Moss.copy(alpha = 0.4f) else Outline, CircleShape)
-            .interactiveClickable(onClick = onClick),
+            .background(if (active) Moss.copy(alpha = 0.16f + glowAlpha * 0.35f) else PanelRaised)
+            .border(1.dp, if (active || hovered) Moss.copy(alpha = 0.4f + glowAlpha * 0.45f) else Outline, CircleShape)
+            .hoverable(interactionSource = interactionSource)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            ),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = if (active) Moss else TextPrimary)
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = if (active || hovered) Moss else TextPrimary,
+            modifier = Modifier.graphicsLayer {
+                scaleX = if (pressed) 0.94f else 1f
+                scaleY = if (pressed) 0.94f else 1f
+            },
+        )
     }
 }
 
@@ -1431,12 +1913,23 @@ internal fun useCompactParserCardLayout(widthDp: Int): Boolean = widthDp < 860
 
 internal fun useCompactTrackRowLayout(widthDp: Int): Boolean = widthDp < 760
 
+private fun derivePlaylistArtworkHint(name: String, artworkHint: String): String {
+    val resolved = artworkHint.trim().ifBlank { name.take(2) }.uppercase()
+    return resolved.take(2).padEnd(2, ' ').trim().ifBlank { "PL" }
+}
+
+private fun volumeIconFor(volume: Float) = when {
+    volume <= 0.001f -> Icons.AutoMirrored.Rounded.VolumeOff
+    volume < 0.5f -> Icons.AutoMirrored.Rounded.VolumeDown
+    else -> Icons.AutoMirrored.Rounded.VolumeUp
+}
+
 internal fun timelineKeyboardStepMs(durationMs: Long): Long =
     (durationMs / 24L).coerceIn(3_000L, 12_000L)
 
 private fun idleValue(index: Int, phase: Float, dense: Boolean): Float {
     val seed = if (dense) 0.22f else 0.16f
-    val wave = kotlin.math.sin((phase * 6.28318f) + index * 0.45f).toFloat()
+    val wave = kotlin.math.sin((phase * 6.28318f) + index * 0.45f)
     return (seed + (wave + 1f) * 0.08f).coerceIn(0f, 0.35f)
 }
 

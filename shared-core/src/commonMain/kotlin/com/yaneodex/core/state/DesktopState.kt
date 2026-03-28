@@ -61,6 +61,7 @@ data class DesktopUiState(
     val visualizer: PlaybackVisualizerState,
     val playbackPositionMs: Long,
     val playbackDurationMs: Long,
+    val playbackVolume: Float,
     val shuffleEnabled: Boolean,
     val isPlaying: Boolean,
     val searchQuery: String,
