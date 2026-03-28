@@ -77,6 +77,60 @@ class DesktopLibraryRepositoryTest {
     }
 
     @Test
+    fun `bulk playlist updates keep unique track ids`() {
+        val root = createTempDirectory("yaneodex-playlist-bulk").toFile()
+        try {
+            File(root, "Artist - Track One.mp3").writeBytes(byteArrayOf(1, 2, 3))
+            File(root, "Artist - Track Two.mp3").writeBytes(byteArrayOf(1, 2, 4))
+            val storage = File(root, "library.json")
+            val repository = DesktopLibraryRepository(
+                storageFile = storage,
+                configuredDefaultRoots = listOf(root.absolutePath),
+            )
+            val imported = repository.importRoots(listOf(root.absolutePath))
+            val playlist = repository.createPlaylist("Inbox").snapshot.playlists.first { it.name == "Inbox" }
+            val ids = imported.snapshot.tracks.map { it.id }
+
+            val withTracks = repository.addTracksToPlaylist(ids + ids.first(), playlist.id)
+            assertEquals(ids.toSet(), withTracks.snapshot.playlists.first { it.id == playlist.id }.trackIds.toSet())
+
+            val withoutTracks = repository.removeTracksFromPlaylist(ids, playlist.id)
+            assertTrue(withoutTracks.snapshot.playlists.first { it.id == playlist.id }.trackIds.isEmpty())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `removing tracks from library hides them and cleans playlists`() {
+        val root = createTempDirectory("yaneodex-library-remove").toFile()
+        try {
+            File(root, "Artist - Track One.mp3").writeBytes(byteArrayOf(1, 2, 3))
+            File(root, "Artist - Track Two.mp3").writeBytes(byteArrayOf(1, 2, 4))
+            val storage = File(root, "library.json")
+            val repository = DesktopLibraryRepository(
+                storageFile = storage,
+                configuredDefaultRoots = listOf(root.absolutePath),
+            )
+            val imported = repository.importRoots(listOf(root.absolutePath))
+            val playlist = repository.createPlaylist("Inbox").snapshot.playlists.first { it.name == "Inbox" }
+            val trackIds = imported.snapshot.tracks.map { it.id }
+            repository.addTracksToPlaylist(trackIds, playlist.id)
+
+            val updated = repository.removeTracksFromLibrary(listOf(trackIds.first()))
+
+            assertEquals(1, updated.snapshot.tracks.size)
+            assertTrue(updated.snapshot.tracks.none { it.id == trackIds.first() })
+            assertTrue(updated.snapshot.playlists.first { it.id == playlist.id }.trackIds.none { it == trackIds.first() })
+
+            val reloaded = repository.load()
+            assertEquals(updated.snapshot.tracks.map { it.id }, reloaded.snapshot.tracks.map { it.id })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `repeated imports do not duplicate roots or tracks`() {
         val root = createTempDirectory("yaneodex-duplicates").toFile()
         try {

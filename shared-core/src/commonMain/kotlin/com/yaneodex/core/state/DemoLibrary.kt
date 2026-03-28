@@ -30,6 +30,7 @@ object DemoLibrary {
             visualizer = PlaybackVisualizerState.idle(),
             playbackPositionMs = 0L,
             playbackDurationMs = 0L,
+            playbackVolume = 0.72f,
             shuffleEnabled = false,
             isPlaying = false,
             searchQuery = "",

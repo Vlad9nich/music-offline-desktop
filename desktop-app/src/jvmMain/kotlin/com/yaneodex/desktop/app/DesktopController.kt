@@ -57,6 +57,10 @@ class DesktopController(
     private val _state = MutableStateFlow(buildInitialState())
     val state: StateFlow<DesktopUiState> = _state.asStateFlow()
 
+    init {
+        playbackBackend.setVolume(_state.value.playbackVolume, ::syncPlaybackState)
+    }
+
     fun selectSection(section: DesktopSection) {
         mutate { it.copy(selectedSection = section) }
     }
@@ -87,9 +91,9 @@ class DesktopController(
         }
     }
 
-    fun createPlaylist(name: String) {
+    fun createPlaylist(name: String, artworkHint: String = "") {
         scope.launch {
-            runCatching { libraryRepository.createPlaylist(name) }
+            runCatching { libraryRepository.createPlaylist(name, artworkHint) }
                 .onSuccess { stored ->
                     mutate { current ->
                         val playlist = stored.snapshot.playlists.lastOrNull()
@@ -109,12 +113,11 @@ class DesktopController(
         }
     }
 
-    fun renameSelectedPlaylist(name: String) {
-        val playlistId = state.value.selectedPlaylistId
+    fun renameSelectedPlaylist(playlistId: String, name: String, artworkHint: String = "") {
         if (playlistId.isBlank() || playlistId == ALL_TRACKS_PLAYLIST_ID) return
 
         scope.launch {
-            runCatching { libraryRepository.renamePlaylist(playlistId, name) }
+            runCatching { libraryRepository.renamePlaylist(playlistId, name, artworkHint) }
                 .onSuccess { stored ->
                     mutate { current ->
                         val playlist = stored.snapshot.playlists.firstOrNull { it.id == playlistId }
@@ -133,13 +136,19 @@ class DesktopController(
     }
 
     fun addTrackToSelectedPlaylist(trackId: String) {
+        addTracksToSelectedPlaylist(listOf(trackId))
+    }
+
+    fun addTracksToSelectedPlaylist(trackIds: List<String>) {
+        val normalizedTrackIds = trackIds.distinct()
+        if (normalizedTrackIds.isEmpty()) return
         scope.launch {
             val currentState = state.value
             runCatching {
                 val ensuredState = ensureEditablePlaylist(currentState)
                 val targetPlaylistId = resolveEditablePlaylistId(ensuredState)
                     ?: error(text(currentState.language, "Нет доступного плейлиста.", "No editable playlist available."))
-                targetPlaylistId to libraryRepository.addTrackToPlaylist(trackId, targetPlaylistId)
+                targetPlaylistId to libraryRepository.addTracksToPlaylist(normalizedTrackIds, targetPlaylistId)
             }.onSuccess { (targetPlaylistId, stored) ->
                 mutate { current ->
                     val refreshed = rebuildSnapshotState(current, stored.snapshot, stored.roots).copy(
@@ -161,11 +170,16 @@ class DesktopController(
     }
 
     fun removeTrackFromSelectedPlaylist(trackId: String) {
+        removeTracksFromSelectedPlaylist(listOf(trackId))
+    }
+
+    fun removeTracksFromSelectedPlaylist(trackIds: List<String>) {
         val playlistId = state.value.selectedPlaylistId
-        if (playlistId.isBlank() || playlistId == ALL_TRACKS_PLAYLIST_ID) return
+        val normalizedTrackIds = trackIds.distinct()
+        if (playlistId.isBlank() || playlistId == ALL_TRACKS_PLAYLIST_ID || normalizedTrackIds.isEmpty()) return
 
         scope.launch {
-            runCatching { libraryRepository.removeTrackFromPlaylist(trackId, playlistId) }
+            runCatching { libraryRepository.removeTracksFromPlaylist(normalizedTrackIds, playlistId) }
                 .onSuccess { stored ->
                     mutate { current ->
                         rebuildSnapshotState(current, stored.snapshot, stored.roots).copy(
@@ -176,6 +190,44 @@ class DesktopController(
                 .onFailure { error ->
                     mutate { current ->
                         current.copy(libraryStatus = error.message ?: text(current.language, "Не удалось удалить трек.", "Failed to remove track."))
+                    }
+                }
+        }
+    }
+
+    fun deleteTracksFromLibrary(trackIds: List<String>) {
+        val normalizedTrackIds = trackIds.distinct()
+        if (normalizedTrackIds.isEmpty()) return
+
+        scope.launch {
+            val shouldStopPlayback = state.value.currentTrackId in normalizedTrackIds
+            runCatching { libraryRepository.removeTracksFromLibrary(normalizedTrackIds) }
+                .onSuccess { stored ->
+                    if (shouldStopPlayback) {
+                        playbackBackend.stop()
+                    }
+                    mutate { current ->
+                        rebuildSnapshotState(current, stored.snapshot, stored.roots).copy(
+                            isPlaying = if (shouldStopPlayback) false else current.isPlaying,
+                            visualizer = if (shouldStopPlayback) PlaybackVisualizerState.idle() else current.visualizer,
+                            playbackPositionMs = if (shouldStopPlayback) 0L else current.playbackPositionMs,
+                            libraryStatus = if (normalizedTrackIds.size == 1) {
+                                text(current.language, "РўСЂРµРє СѓРґР°Р»С‘РЅ РёР· Р±РёР±Р»РёРѕС‚РµРєРё.", "Track removed from library.")
+                            } else {
+                                text(current.language, "РўСЂРµРєРё СѓРґР°Р»РµРЅС‹ РёР· Р±РёР±Р»РёРѕС‚РµРєРё.", "Tracks removed from library.")
+                            },
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    mutate { current ->
+                        current.copy(
+                            libraryStatus = error.message ?: if (normalizedTrackIds.size == 1) {
+                                text(current.language, "РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ С‚СЂРµРє РёР· Р±РёР±Р»РёРѕС‚РµРєРё.", "Failed to remove track from library.")
+                            } else {
+                                text(current.language, "РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ С‚СЂРµРєРё РёР· Р±РёР±Р»РёРѕС‚РµРєРё.", "Failed to remove tracks from library.")
+                            },
+                        )
                     }
                 }
         }
@@ -247,6 +299,13 @@ class DesktopController(
             it.copy(playbackPositionMs = positionMs.coerceIn(0L, duration.takeIf { total -> total > 0 } ?: positionMs.coerceAtLeast(0L)))
         }
         playbackBackend.seekTo(positionMs, ::syncPlaybackState)
+    }
+
+    fun setPlaybackVolume(volume: Float) {
+        mutate {
+            it.copy(playbackVolume = volume.coerceIn(0f, 1f))
+        }
+        playbackBackend.setVolume(volume, ::syncPlaybackState)
     }
 
     fun updateSearchQuery(query: String) {
@@ -567,6 +626,7 @@ class DesktopController(
             ?: snapshot.playlists.firstOrNull()?.id
             ?: ALL_TRACKS_PLAYLIST_ID
         val currentTrackId = snapshot.tracks.firstOrNull { it.id == current.currentTrackId }?.id ?: snapshot.tracks.firstOrNull()?.id
+        val stillHasCurrentTrack = snapshot.tracks.any { it.id == current.currentTrackId }
         val selectedPlaylistTracks = snapshot.playlists
             .firstOrNull { it.id == selectedPlaylistId }
             ?.trackIds
@@ -580,9 +640,11 @@ class DesktopController(
             selectedPlaylistId = selectedPlaylistId,
             currentTrackId = currentTrackId,
             playbackQueue = buildPlaybackQueue(queueSource, currentTrackId, current.shuffleEnabled, random),
-            visualizer = if (current.isPlaying) current.visualizer else PlaybackVisualizerState.idle(current.visualizer.bands.size),
-            playbackPositionMs = if (currentTrackId == current.currentTrackId) current.playbackPositionMs else 0L,
+            isPlaying = current.isPlaying && stillHasCurrentTrack,
+            visualizer = if (current.isPlaying && stillHasCurrentTrack) current.visualizer else PlaybackVisualizerState.idle(current.visualizer.bands.size),
+            playbackPositionMs = if (currentTrackId == current.currentTrackId && stillHasCurrentTrack) current.playbackPositionMs else 0L,
             playbackDurationMs = snapshot.tracks.firstOrNull { it.id == currentTrackId }?.durationMs ?: current.playbackDurationMs,
+            playbackVolume = current.playbackVolume,
         )
     }
 
@@ -594,6 +656,7 @@ class DesktopController(
                 visualizer = mergeVisualizer(current.visualizer, snapshot.visualizer, snapshot.isPlaying),
                 playbackPositionMs = snapshot.positionMs,
                 playbackDurationMs = snapshot.durationMs.takeIf { it > 0 } ?: current.currentTrack?.durationMs ?: current.playbackDurationMs,
+                playbackVolume = snapshot.volume.coerceIn(0f, 1f),
                 libraryStatus = snapshot.errorMessage ?: current.libraryStatus,
             )
         }

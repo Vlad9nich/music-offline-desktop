@@ -16,7 +16,6 @@ import com.yaneodex.core.model.SourceDescriptor
 import com.yaneodex.core.model.TrackRecord
 import com.yaneodex.core.state.PlaybackVisualizerState
 import com.yaneodex.desktop.integration.DesktopConfig
-import com.yaneodex.desktop.integration.DesktopDownloadManager
 import com.yaneodex.desktop.integration.DesktopPersistence
 import com.yaneodex.desktop.integration.DownloadManager
 import java.io.File
@@ -26,6 +25,36 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DesktopControllerTest {
+    @Test
+    fun `bulk actions update library and playlist state`() {
+        val backend = FakePlaybackBackend()
+        val controller = controller(backend = backend)
+
+        controller.addTracksToSelectedPlaylist(listOf("track-1"))
+        waitForCondition {
+            controller.state.value.snapshot.playlists
+                .firstOrNull { it.id == "playlist-1" }
+                ?.trackIds
+                ?.contains("track-1")
+                ?.takeIf { it }
+        }
+        assertTrue(controller.state.value.snapshot.playlists.first { it.id == "playlist-1" }.trackIds.contains("track-1"))
+
+        controller.removeTracksFromSelectedPlaylist(listOf("track-1"))
+        waitForCondition {
+            controller.state.value.snapshot.playlists
+                .firstOrNull { it.id == "playlist-1" }
+                ?.trackIds
+                ?.contains("track-1")
+                ?.takeIf { present -> !present }
+        }
+        assertTrue(controller.state.value.snapshot.playlists.first { it.id == "playlist-1" }.trackIds.none { it == "track-1" })
+
+        controller.deleteTracksFromLibrary(listOf("track-1"))
+        waitForCondition { controller.state.value.snapshot.tracks.none { it.id == "track-1" }.takeIf { it } }
+        assertTrue(controller.state.value.snapshot.tracks.none { it.id == "track-1" })
+    }
+
     @Test
     fun `playback snapshots update visualizer state`() {
         val backend = FakePlaybackBackend()
@@ -187,20 +216,18 @@ class DesktopControllerTest {
         )
     }
 
-    private fun waitForStartedTrackId(backend: FakePlaybackBackend): String {
-        repeat(50) {
-            backend.startedTrackId?.let { return it }
-            Thread.sleep(20)
-        }
-        error("Track id was not set in time")
-    }
+    private fun waitForStartedTrackId(backend: FakePlaybackBackend): String =
+        waitForCondition { backend.startedTrackId }
 
-    private fun waitForStatus(controller: DesktopController, predicate: (String) -> Boolean): String {
+    private fun waitForStatus(controller: DesktopController, predicate: (String) -> Boolean): String =
+        waitForCondition { controller.state.value.parserStatus.takeIf(predicate) }
+
+    private fun <T> waitForCondition(check: () -> T?): T {
         repeat(50) {
-            controller.state.value.parserStatus.takeIf(predicate)?.let { return it }
+            check()?.let { return it }
             Thread.sleep(20)
         }
-        error("Parser status was not updated in time")
+        error("Condition was not satisfied in time")
     }
 }
 
@@ -209,6 +236,8 @@ private class FakePlaybackBackend : PlaybackBackend {
     var startedTrackId: String? = null
         private set
     var lastSeekPositionMs: Long? = null
+        private set
+    var lastVolume: Float = 0.72f
         private set
 
     override fun playQueue(queue: List<TrackRecord>, startTrackId: String?, onState: (PlaybackSnapshot) -> Unit) {
@@ -231,6 +260,11 @@ private class FakePlaybackBackend : PlaybackBackend {
     override fun seekTo(positionMs: Long, onState: (PlaybackSnapshot) -> Unit) {
         callback = onState
         lastSeekPositionMs = positionMs
+    }
+
+    override fun setVolume(volume: Float, onState: (PlaybackSnapshot) -> Unit) {
+        callback = onState
+        lastVolume = volume
     }
 
     override fun stop() = Unit
@@ -303,33 +337,54 @@ private class FakeLibraryRepository : LibraryRepository {
 
     override fun refresh(): StoredLibraryState = StoredLibraryState(roots, snapshot)
 
-    override fun createPlaylist(name: String): StoredLibraryState {
+    override fun createPlaylist(name: String, artworkHint: String): StoredLibraryState {
         snapshot = snapshot.copy(
-            playlists = snapshot.playlists + PlaylistRecord("playlist-${snapshot.playlists.size}", name, "PL", "#7CC8FF", "", emptyList(), 1_700_000_000_100L),
+            playlists = snapshot.playlists + PlaylistRecord("playlist-${snapshot.playlists.size}", name, artworkHint.ifBlank { "PL" }, "#7CC8FF", "", emptyList(), 1_700_000_000_100L),
         )
         return StoredLibraryState(roots, snapshot)
     }
 
-    override fun renamePlaylist(playlistId: String, name: String): StoredLibraryState {
+    override fun renamePlaylist(playlistId: String, name: String, artworkHint: String): StoredLibraryState {
         snapshot = snapshot.copy(
-            playlists = snapshot.playlists.map { if (it.id == playlistId) it.copy(name = name) else it },
+            playlists = snapshot.playlists.map {
+                if (it.id == playlistId) it.copy(name = name, artworkHint = artworkHint.ifBlank { it.artworkHint }) else it
+            },
         )
         return StoredLibraryState(roots, snapshot)
     }
 
     override fun addTrackToPlaylist(trackId: String, playlistId: String): StoredLibraryState {
+        return addTracksToPlaylist(listOf(trackId), playlistId)
+    }
+
+    override fun addTracksToPlaylist(trackIds: List<String>, playlistId: String): StoredLibraryState {
         snapshot = snapshot.copy(
             playlists = snapshot.playlists.map { playlist ->
-                if (playlist.id == playlistId) playlist.copy(trackIds = (playlist.trackIds + trackId).distinct()) else playlist
+                if (playlist.id == playlistId) playlist.copy(trackIds = (playlist.trackIds + trackIds).distinct()) else playlist
             },
         )
         return StoredLibraryState(roots, snapshot)
     }
 
     override fun removeTrackFromPlaylist(trackId: String, playlistId: String): StoredLibraryState {
+        return removeTracksFromPlaylist(listOf(trackId), playlistId)
+    }
+
+    override fun removeTracksFromPlaylist(trackIds: List<String>, playlistId: String): StoredLibraryState {
         snapshot = snapshot.copy(
             playlists = snapshot.playlists.map { playlist ->
-                if (playlist.id == playlistId) playlist.copy(trackIds = playlist.trackIds.filterNot { it == trackId }) else playlist
+                if (playlist.id == playlistId) playlist.copy(trackIds = playlist.trackIds.filterNot { it in trackIds.toSet() }) else playlist
+            },
+        )
+        return StoredLibraryState(roots, snapshot)
+    }
+
+    override fun removeTracksFromLibrary(trackIds: List<String>): StoredLibraryState {
+        val removed = trackIds.toSet()
+        snapshot = snapshot.copy(
+            tracks = snapshot.tracks.filterNot { it.id in removed },
+            playlists = snapshot.playlists.map { playlist ->
+                playlist.copy(trackIds = playlist.trackIds.filterNot { it in removed })
             },
         )
         return StoredLibraryState(roots, snapshot)

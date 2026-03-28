@@ -27,11 +27,11 @@ class DesktopLibraryRepository(
         }.getOrNull()
 
         val roots = sanitizeRoots(stored?.roots ?: defaultRoots())
-        val scannedTracks = scanRoots(roots)
+        val scannedTracks = scanRoots(roots, stored?.hiddenTrackSourceUris.orEmpty())
         val playlists = reconcilePlaylists(stored?.playlists.orEmpty(), scannedTracks)
         val snapshot = LibrarySnapshot(scannedTracks, playlists)
         if (stored != null && (stored.roots != roots || stored.playlists != playlists || stored.snapshot != snapshot)) {
-            return persist(roots, playlists)
+            return persist(roots, playlists, stored.hiddenTrackSourceUris)
         }
         return StoredLibraryState(roots, snapshot)
     }
@@ -39,30 +39,30 @@ class DesktopLibraryRepository(
     override fun importRoots(paths: List<String>): StoredLibraryState {
         val current = load()
         val mergedRoots = sanitizeRoots(current.roots + paths)
-        return persist(mergedRoots, current.snapshot.playlists)
+        return persist(mergedRoots, current.snapshot.playlists, currentHiddenTrackSourceUris())
     }
 
     override fun refresh(): StoredLibraryState {
         val current = load()
-        return persist(sanitizeRoots(current.roots), current.snapshot.playlists)
+        return persist(sanitizeRoots(current.roots), current.snapshot.playlists, currentHiddenTrackSourceUris())
     }
 
-    override fun createPlaylist(name: String): StoredLibraryState {
+    override fun createPlaylist(name: String, artworkHint: String): StoredLibraryState {
         val current = load()
         val trimmed = name.trim().ifBlank { "New Playlist" }
         val newPlaylist = PlaylistRecord(
             id = "playlist-${UUID.randomUUID()}",
             name = trimmed,
-            artworkHint = trimmed.take(2).uppercase().padEnd(2, ' ').trim(),
+            artworkHint = resolveArtworkHint(trimmed, artworkHint),
             tone = playlistTone(current.snapshot.playlists.size),
             description = "",
             trackIds = emptyList(),
             createdAtEpochMs = System.currentTimeMillis(),
         )
-        return persist(current.roots, current.snapshot.playlists + newPlaylist)
+        return persist(current.roots, current.snapshot.playlists + newPlaylist, currentHiddenTrackSourceUris())
     }
 
-    override fun renamePlaylist(playlistId: String, name: String): StoredLibraryState {
+    override fun renamePlaylist(playlistId: String, name: String, artworkHint: String): StoredLibraryState {
         val current = load()
         val trimmed = name.trim()
         if (trimmed.isBlank()) return current
@@ -70,45 +70,69 @@ class DesktopLibraryRepository(
             if (playlist.id == playlistId) {
                 playlist.copy(
                     name = trimmed,
-                    artworkHint = trimmed.take(2).uppercase().padEnd(2, ' ').trim(),
+                    artworkHint = resolveArtworkHint(trimmed, artworkHint),
                 )
             } else {
                 playlist
             }
         }
-        return persist(current.roots, updated)
+        return persist(current.roots, updated, currentHiddenTrackSourceUris())
     }
 
-    override fun addTrackToPlaylist(trackId: String, playlistId: String): StoredLibraryState {
+    override fun addTracksToPlaylist(trackIds: List<String>, playlistId: String): StoredLibraryState {
         val current = load()
+        val normalizedTrackIds = trackIds.distinct()
         val updated = current.snapshot.playlists.map { playlist ->
             if (playlist.id == playlistId) {
-                playlist.copy(trackIds = (playlist.trackIds + trackId).distinct())
+                playlist.copy(trackIds = (playlist.trackIds + normalizedTrackIds).distinct())
             } else {
                 playlist
             }
         }
-        return persist(current.roots, updated)
+        return persist(current.roots, updated, currentHiddenTrackSourceUris())
     }
 
-    override fun removeTrackFromPlaylist(trackId: String, playlistId: String): StoredLibraryState {
+    override fun removeTracksFromPlaylist(trackIds: List<String>, playlistId: String): StoredLibraryState {
         val current = load()
+        val removedIds = trackIds.toSet()
         val updated = current.snapshot.playlists.map { playlist ->
             if (playlist.id == playlistId) {
-                playlist.copy(trackIds = playlist.trackIds.filterNot { it == trackId })
+                playlist.copy(trackIds = playlist.trackIds.filterNot { it in removedIds })
             } else {
                 playlist
             }
         }
-        return persist(current.roots, updated)
+        return persist(current.roots, updated, currentHiddenTrackSourceUris())
     }
 
-    private fun persist(roots: List<String>, existingPlaylists: List<PlaylistRecord>): StoredLibraryState {
+    override fun removeTracksFromLibrary(trackIds: List<String>): StoredLibraryState {
+        val current = load()
+        val removedSourceUris = current.snapshot.tracks
+            .filter { it.id in trackIds.toSet() }
+            .map { it.sourceUri }
+        val updatedPlaylists = current.snapshot.playlists.map { playlist ->
+            playlist.copy(trackIds = playlist.trackIds.filterNot { it in trackIds.toSet() })
+        }
+        val hiddenTrackSourceUris = (currentHiddenTrackSourceUris() + removedSourceUris).distinct()
+        return persist(current.roots, updatedPlaylists, hiddenTrackSourceUris)
+    }
+
+    private fun persist(
+        roots: List<String>,
+        existingPlaylists: List<PlaylistRecord>,
+        hiddenTrackSourceUris: List<String>,
+    ): StoredLibraryState {
         val sanitizedRoots = sanitizeRoots(roots)
-        val scannedTracks = scanRoots(sanitizedRoots)
+        val hidden = hiddenTrackSourceUris.map(::normalizePath).distinct()
+        val scannedTracks = scanRoots(sanitizedRoots, hidden)
         val playlists = reconcilePlaylists(existingPlaylists, scannedTracks)
         val snapshot = LibrarySnapshot(scannedTracks, playlists)
-        val stored = StoredLibrary(roots = sanitizedRoots, snapshot = snapshot, playlists = playlists)
+        val stored = StoredLibrary(
+            roots = sanitizedRoots,
+            snapshot = snapshot,
+            playlists = playlists,
+            hiddenTrackSourceUris = hidden,
+        )
         storageFile.parentFile?.mkdirs()
         storageFile.writeText(json.encodeToString(StoredLibrary.serializer(), stored))
         return StoredLibraryState(roots = sanitizedRoots, snapshot = snapshot)
@@ -133,7 +157,8 @@ class DesktopLibraryRepository(
         return listOf(libraryAll) + cleaned
     }
 
-    private fun scanRoots(roots: List<String>): List<TrackRecord> {
+    private fun scanRoots(roots: List<String>, hiddenTrackSourceUris: List<String>): List<TrackRecord> {
+        val hidden = hiddenTrackSourceUris.map(::normalizePath).toSet()
         return roots
             .map(::File)
             .filter { it.exists() }
@@ -144,7 +169,18 @@ class DesktopLibraryRepository(
                     .toList()
             }
             .distinctBy { it.sourceUri }
+            .filterNot { it.sourceUri in hidden }
             .sortedWith(compareBy<TrackRecord> { it.artist.lowercase() }.thenBy { it.title.lowercase() })
+    }
+
+    private fun currentHiddenTrackSourceUris(): List<String> {
+        return runCatching {
+            if (!storageFile.exists()) {
+                emptyList()
+            } else {
+                json.decodeFromString<StoredLibrary>(storageFile.readText()).hiddenTrackSourceUris
+            }
+        }.getOrElse { emptyList() }
     }
 
     private fun toTrackRecord(file: File): TrackRecord {
@@ -191,6 +227,11 @@ class DesktopLibraryRepository(
         return sanitizeRoots(configuredDefaultRoots)
     }
 
+    private fun resolveArtworkHint(name: String, explicitHint: String): String {
+        val normalized = explicitHint.trim().ifBlank { name.take(2) }
+        return normalized.uppercase().take(2).padEnd(2, ' ').trim()
+    }
+
     private fun sanitizeRoots(paths: List<String>): List<String> {
         return paths
             .mapNotNull { raw ->
@@ -226,4 +267,5 @@ data class StoredLibrary(
     val roots: List<String>,
     val snapshot: LibrarySnapshot,
     val playlists: List<PlaylistRecord>,
+    val hiddenTrackSourceUris: List<String> = emptyList(),
 )

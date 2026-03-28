@@ -17,10 +17,17 @@ interface LibraryRepository {
     fun load(): StoredLibraryState
     fun importRoots(paths: List<String>): StoredLibraryState
     fun refresh(): StoredLibraryState
-    fun createPlaylist(name: String): StoredLibraryState
-    fun renamePlaylist(playlistId: String, name: String): StoredLibraryState
-    fun addTrackToPlaylist(trackId: String, playlistId: String): StoredLibraryState
-    fun removeTrackFromPlaylist(trackId: String, playlistId: String): StoredLibraryState
+    fun createPlaylist(name: String, artworkHint: String = ""): StoredLibraryState
+    fun renamePlaylist(playlistId: String, name: String, artworkHint: String = ""): StoredLibraryState
+    fun addTracksToPlaylist(trackIds: List<String>, playlistId: String): StoredLibraryState
+    fun removeTracksFromPlaylist(trackIds: List<String>, playlistId: String): StoredLibraryState
+    fun removeTracksFromLibrary(trackIds: List<String>): StoredLibraryState
+
+    fun addTrackToPlaylist(trackId: String, playlistId: String): StoredLibraryState =
+        addTracksToPlaylist(listOf(trackId), playlistId)
+
+    fun removeTrackFromPlaylist(trackId: String, playlistId: String): StoredLibraryState =
+        removeTracksFromPlaylist(listOf(trackId), playlistId)
 }
 
 interface PlaybackBackend {
@@ -29,6 +36,7 @@ interface PlaybackBackend {
     fun playNext(onState: (PlaybackSnapshot) -> Unit)
     fun playPrevious(onState: (PlaybackSnapshot) -> Unit)
     fun seekTo(positionMs: Long, onState: (PlaybackSnapshot) -> Unit)
+    fun setVolume(volume: Float, onState: (PlaybackSnapshot) -> Unit)
     fun stop()
 }
 
@@ -39,6 +47,7 @@ data class PlaybackSnapshot(
     val visualizer: PlaybackVisualizerState? = null,
     val positionMs: Long = 0L,
     val durationMs: Long = 0L,
+    val volume: Float = 0.72f,
 )
 
 interface MusicSource {
