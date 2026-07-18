@@ -8,16 +8,25 @@ import javafx.application.Platform
 import javafx.scene.media.Media
 import javafx.scene.media.MediaPlayer
 import javafx.util.Duration
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.random.Random
 
+/**
+ * Thread-safe JavaFX media backend.
+ * All mutations hop to the FX thread; session ids invalidate stale callbacks after rapid seeks/clicks.
+ */
 class JavaFxPlaybackBackend : PlaybackBackend {
     private var queue: List<TrackRecord> = emptyList()
     private var currentIndex: Int = -1
     private var mediaPlayer: MediaPlayer? = null
     private var volume: Float = 0.72f
-    private var playbackSessionId: Long = 0L
+    private val sessionCounter = AtomicLong(0L)
+    @Volatile private var activeSessionId: Long = 0L
     private var lastTimelineEmitAtMs: Long = 0L
     private var lastSpectrumEmitAtMs: Long = 0L
+    private var lastKnownPositionMs: Long = 0L
 
     override fun playQueue(
         queue: List<TrackRecord>,
@@ -28,42 +37,47 @@ class JavaFxPlaybackBackend : PlaybackBackend {
             onState(PlaybackSnapshot())
             return
         }
-        this.queue = queue
-        currentIndex = queue.indexOfFirst { it.id == startTrackId }.takeIf { it >= 0 } ?: 0
-        playCurrent(onState)
+        // Snapshot on caller thread so concurrent mutate races don't corrupt queue mid-play.
+        val snapshotQueue = queue.toList()
+        val startIndex = snapshotQueue.indexOfFirst { it.id == startTrackId }.takeIf { it >= 0 } ?: 0
+        runOnFxThread {
+            this.queue = snapshotQueue
+            this.currentIndex = startIndex
+            playCurrentLocked(onState)
+        }
     }
 
     override fun togglePlayPause(onState: (PlaybackSnapshot) -> Unit) {
-        val player = mediaPlayer ?: return
         runOnFxThread {
+            val player = mediaPlayer
+            if (player == null) {
+                // Recover after dispose races: restart current queue item.
+                if (queue.isNotEmpty() && currentIndex in queue.indices) {
+                    playCurrentLocked(onState)
+                }
+                return@runOnFxThread
+            }
             when (player.status) {
                 MediaPlayer.Status.PLAYING -> {
                     player.pause()
-                    onState(
-                        PlaybackSnapshot(
-                            currentTrackId = queue.getOrNull(currentIndex)?.id,
-                            isPlaying = false,
-                            visualizer = PlaybackVisualizerState.idle(),
-                            positionMs = player.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: 0L,
-                            durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong()
-                                ?: queue.getOrNull(currentIndex)?.durationMs
-                                ?: 0L,
-                            volume = volume,
-                        ),
+                    emitState(
+                        onState = onState,
+                        isPlaying = false,
+                        visualizer = syntheticVisualizer(playing = false),
                     )
+                }
+                MediaPlayer.Status.UNKNOWN,
+                MediaPlayer.Status.HALTED,
+                MediaPlayer.Status.DISPOSED,
+                -> {
+                    playCurrentLocked(onState)
                 }
                 else -> {
                     player.play()
-                    onState(
-                        PlaybackSnapshot(
-                            currentTrackId = queue.getOrNull(currentIndex)?.id,
-                            isPlaying = true,
-                            positionMs = player.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: 0L,
-                            durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong()
-                                ?: queue.getOrNull(currentIndex)?.durationMs
-                                ?: 0L,
-                            volume = volume,
-                        ),
+                    emitState(
+                        onState = onState,
+                        isPlaying = true,
+                        visualizer = syntheticVisualizer(playing = true),
                     )
                 }
             }
@@ -71,34 +85,38 @@ class JavaFxPlaybackBackend : PlaybackBackend {
     }
 
     override fun playNext(onState: (PlaybackSnapshot) -> Unit) {
-        if (queue.isEmpty()) return
-        currentIndex = (currentIndex + 1).coerceAtMost(queue.lastIndex)
-        playCurrent(onState)
+        runOnFxThread {
+            if (queue.isEmpty()) return@runOnFxThread
+            currentIndex = (currentIndex + 1).coerceAtMost(queue.lastIndex)
+            playCurrentLocked(onState)
+        }
     }
 
     override fun playPrevious(onState: (PlaybackSnapshot) -> Unit) {
-        if (queue.isEmpty()) return
-        currentIndex = (currentIndex - 1).coerceAtLeast(0)
-        playCurrent(onState)
+        runOnFxThread {
+            if (queue.isEmpty()) return@runOnFxThread
+            // Restart track if >3s in, else previous
+            val pos = mediaPlayer?.currentTime?.toMillis()?.toLong() ?: 0L
+            if (pos > 3000L) {
+                mediaPlayer?.seek(Duration.ZERO)
+                emitState(onState, isPlaying = mediaPlayer?.status == MediaPlayer.Status.PLAYING)
+            } else {
+                currentIndex = (currentIndex - 1).coerceAtLeast(0)
+                playCurrentLocked(onState)
+            }
+        }
     }
 
     override fun seekTo(positionMs: Long, onState: (PlaybackSnapshot) -> Unit) {
-        val player = mediaPlayer ?: return
         runOnFxThread {
+            val player = mediaPlayer ?: return@runOnFxThread
             val durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong()
                 ?: queue.getOrNull(currentIndex)?.durationMs
                 ?: 0L
             val targetMs = positionMs.coerceIn(0L, durationMs.takeIf { it > 0 } ?: positionMs.coerceAtLeast(0L))
             player.seek(Duration.millis(targetMs.toDouble()))
-            onState(
-                PlaybackSnapshot(
-                    currentTrackId = queue.getOrNull(currentIndex)?.id,
-                    isPlaying = player.status == MediaPlayer.Status.PLAYING,
-                    positionMs = targetMs,
-                    durationMs = durationMs,
-                    volume = volume,
-                ),
-            )
+            lastKnownPositionMs = targetMs
+            emitState(onState, isPlaying = player.status == MediaPlayer.Status.PLAYING, positionMs = targetMs)
         }
     }
 
@@ -106,157 +124,218 @@ class JavaFxPlaybackBackend : PlaybackBackend {
         this.volume = volume.coerceIn(0f, 1f)
         runOnFxThread {
             mediaPlayer?.volume = this.volume.toDouble()
-            val player = mediaPlayer
-            onState(
-                PlaybackSnapshot(
-                    currentTrackId = queue.getOrNull(currentIndex)?.id,
-                    isPlaying = player?.status == MediaPlayer.Status.PLAYING,
-                    visualizer = if (player?.status == MediaPlayer.Status.PLAYING) null else PlaybackVisualizerState.idle(),
-                    positionMs = player?.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: 0L,
-                    durationMs = player?.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong()
-                        ?: queue.getOrNull(currentIndex)?.durationMs
-                        ?: 0L,
-                    volume = this.volume,
-                ),
+            emitState(
+                onState = onState,
+                isPlaying = mediaPlayer?.status == MediaPlayer.Status.PLAYING,
             )
         }
     }
 
     override fun stop() {
         runOnFxThread {
-            playbackSessionId += 1L
-            mediaPlayer?.stop()
-            mediaPlayer?.dispose()
-            mediaPlayer = null
+            invalidateSession()
+            disposePlayer()
         }
     }
 
-    private fun playCurrent(onState: (PlaybackSnapshot) -> Unit) {
+    private fun playCurrentLocked(onState: (PlaybackSnapshot) -> Unit) {
         val track = queue.getOrNull(currentIndex)
         if (track == null) {
             onState(PlaybackSnapshot())
             return
         }
-        runOnFxThread {
-            playbackSessionId += 1L
-            val sessionId = playbackSessionId
-            mediaPlayer?.stop()
-            mediaPlayer?.dispose()
-            val player = MediaPlayer(Media(track.uri))
-            player.volume = volume.toDouble()
-            player.audioSpectrumNumBands = 32
-            // 10 Hz spectrum is enough for UI bars; was 20 Hz (0.05s).
-            player.audioSpectrumInterval = 0.1
-            player.audioSpectrumThreshold = -70
-            player.currentTimeProperty().addListener { _, _, currentTime ->
-                if (sessionId != playbackSessionId || mediaPlayer !== player) return@addListener
-                val now = System.currentTimeMillis()
-                // Throttle timeline UI updates to ~6–7 fps (was every media tick).
-                if (now - lastTimelineEmitAtMs < 150L) return@addListener
-                lastTimelineEmitAtMs = now
-                onState(
-                    PlaybackSnapshot(
-                        currentTrackId = track.id,
-                        isPlaying = player.status == MediaPlayer.Status.PLAYING,
-                        positionMs = currentTime.toMillis().toLong().coerceAtLeast(0L),
-                        durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong() ?: track.durationMs,
-                        volume = volume,
-                    ),
-                )
-            }
-            player.setAudioSpectrumListener { _, _, magnitudes, _ ->
-                if (sessionId != playbackSessionId || mediaPlayer !== player) return@setAudioSpectrumListener
-                val now = System.currentTimeMillis()
-                if (now - lastSpectrumEmitAtMs < 80L) return@setAudioSpectrumListener
-                lastSpectrumEmitAtMs = now
-                val reactiveBands = magnitudes.mapIndexed { index, magnitude ->
-                    val normalized = ((magnitude + 70f) / 70f).coerceIn(0f, 1f)
-                    val bassBias = when {
-                        index <= 3 -> 1.7f
-                        index <= 7 -> 1.35f
-                        else -> 1f - ((index - 8).coerceAtLeast(0) * 0.01f)
+        invalidateSession()
+        disposePlayer()
+        val sessionId = sessionCounter.incrementAndGet()
+        activeSessionId = sessionId
+        lastKnownPositionMs = 0L
+
+        val player = runCatching { MediaPlayer(Media(track.uri)) }.getOrElse { error ->
+            onState(
+                PlaybackSnapshot(
+                    currentTrackId = track.id,
+                    isPlaying = false,
+                    errorMessage = error.message ?: "Playback failed.",
+                    visualizer = PlaybackVisualizerState.idle(32),
+                ),
+            )
+            return
+        }
+        player.volume = volume.toDouble()
+        player.audioSpectrumNumBands = 32
+        player.audioSpectrumInterval = 0.08
+        player.audioSpectrumThreshold = -70
+
+        player.currentTimeProperty().addListener { _, _, currentTime ->
+            if (sessionId != activeSessionId || mediaPlayer !== player) return@addListener
+            val now = System.currentTimeMillis()
+            if (now - lastTimelineEmitAtMs < 120L) return@addListener
+            lastTimelineEmitAtMs = now
+            lastKnownPositionMs = currentTime.toMillis().toLong().coerceAtLeast(0L)
+            // Keep visualizer alive even when spectrum is silent (common for some codecs)
+            val playing = player.status == MediaPlayer.Status.PLAYING
+            emitState(
+                onState = onState,
+                isPlaying = playing,
+                positionMs = lastKnownPositionMs,
+                visualizer = if (playing) {
+                    // Only inject synthetic if no recent spectrum
+                    if (now - lastSpectrumEmitAtMs > 250L) {
+                        syntheticVisualizer(playing = true, positionMs = lastKnownPositionMs)
+                    } else {
+                        null
                     }
-                    (normalized.toDouble().pow(0.72).toFloat() * bassBias).coerceIn(0f, 1f)
-                }
-                val peak = reactiveBands.maxOrNull() ?: 0f
-                val average = reactiveBands.average().toFloat()
-                val intensity = (average * 0.55f + peak * 0.45f).coerceIn(0f, 1f)
-                onState(
-                    PlaybackSnapshot(
-                        currentTrackId = track.id,
-                        isPlaying = true,
-                        visualizer = PlaybackVisualizerState(
-                            bands = reactiveBands.map { band ->
-                                val climaxBoost = 0.82f + intensity * 0.45f
-                                (band * climaxBoost).coerceIn(0f, 1f)
-                            },
-                            intensity = intensity,
-                            active = true,
-                        ),
-                        positionMs = player.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: 0L,
-                        durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong() ?: track.durationMs,
-                        volume = volume,
-                    ),
-                )
-            }
-            mediaPlayer = player
-            player.setOnReady {
-                if (sessionId != playbackSessionId || mediaPlayer !== player) return@setOnReady
-                player.play()
-                onState(
-                    PlaybackSnapshot(
-                        currentTrackId = track.id,
-                        isPlaying = true,
-                        visualizer = PlaybackVisualizerState.idle(32).copy(active = true),
-                        positionMs = 0L,
-                        durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong() ?: track.durationMs,
-                        volume = volume,
-                    ),
-                )
-            }
-            player.setOnEndOfMedia {
-                if (sessionId != playbackSessionId || mediaPlayer !== player) return@setOnEndOfMedia
-                if (currentIndex < queue.lastIndex) {
-                    currentIndex += 1
-                    playCurrent(onState)
                 } else {
-                    onState(
-                        PlaybackSnapshot(
-                            currentTrackId = track.id,
-                            isPlaying = false,
-                            visualizer = PlaybackVisualizerState.idle(32),
-                            positionMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong() ?: track.durationMs,
-                            durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong() ?: track.durationMs,
-                            volume = volume,
-                        ),
-                    )
+                    PlaybackVisualizerState.idle(32)
+                },
+            )
+        }
+
+        player.setAudioSpectrumListener { _, _, magnitudes, _ ->
+            if (sessionId != activeSessionId || mediaPlayer !== player) return@setAudioSpectrumListener
+            val now = System.currentTimeMillis()
+            if (now - lastSpectrumEmitAtMs < 70L) return@setAudioSpectrumListener
+            lastSpectrumEmitAtMs = now
+            val reactiveBands = magnitudes.mapIndexed { index, magnitude ->
+                val normalized = ((magnitude + 70f) / 70f).coerceIn(0f, 1f)
+                val bassBias = when {
+                    index <= 3 -> 1.7f
+                    index <= 7 -> 1.35f
+                    else -> 1f - ((index - 8).coerceAtLeast(0) * 0.01f)
                 }
+                (normalized.toDouble().pow(0.72).toFloat() * bassBias).coerceIn(0f, 1f)
             }
-            player.setOnError {
-                if (sessionId != playbackSessionId || mediaPlayer !== player) return@setOnError
+            // If spectrum is flat, fall back to synthetic ASCII motion
+            val peak = reactiveBands.maxOrNull() ?: 0f
+            val bands = if (peak < 0.04f && player.status == MediaPlayer.Status.PLAYING) {
+                syntheticBands(positionMs = lastKnownPositionMs)
+            } else {
+                reactiveBands
+            }
+            val intensity = bands.average().toFloat().coerceIn(0f, 1f)
+            onState(
+                PlaybackSnapshot(
+                    currentTrackId = track.id,
+                    isPlaying = true,
+                    visualizer = PlaybackVisualizerState(
+                        bands = bands,
+                        intensity = intensity,
+                        active = true,
+                    ),
+                    positionMs = player.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: lastKnownPositionMs,
+                    durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong() ?: track.durationMs,
+                    volume = volume,
+                ),
+            )
+        }
+
+        mediaPlayer = player
+        player.setOnReady {
+            if (sessionId != activeSessionId || mediaPlayer !== player) return@setOnReady
+            player.play()
+            onState(
+                PlaybackSnapshot(
+                    currentTrackId = track.id,
+                    isPlaying = true,
+                    visualizer = PlaybackVisualizerState(
+                        bands = syntheticBands(0L),
+                        intensity = 0.35f,
+                        active = true,
+                    ),
+                    positionMs = 0L,
+                    durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong() ?: track.durationMs,
+                    volume = volume,
+                ),
+            )
+        }
+        player.setOnEndOfMedia {
+            if (sessionId != activeSessionId || mediaPlayer !== player) return@setOnEndOfMedia
+            if (currentIndex < queue.lastIndex) {
+                currentIndex += 1
+                playCurrentLocked(onState)
+            } else {
                 onState(
                     PlaybackSnapshot(
                         currentTrackId = track.id,
                         isPlaying = false,
-                        errorMessage = player.error?.message ?: "Playback failed.",
                         visualizer = PlaybackVisualizerState.idle(32),
-                        positionMs = player.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: 0L,
+                        positionMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong() ?: track.durationMs,
                         durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong() ?: track.durationMs,
                         volume = volume,
                     ),
                 )
             }
         }
+        player.setOnError {
+            if (sessionId != activeSessionId || mediaPlayer !== player) return@setOnError
+            onState(
+                PlaybackSnapshot(
+                    currentTrackId = track.id,
+                    isPlaying = false,
+                    errorMessage = player.error?.message ?: "Playback failed.",
+                    visualizer = PlaybackVisualizerState.idle(32),
+                    volume = volume,
+                ),
+            )
+        }
+    }
+
+    private fun emitState(
+        onState: (PlaybackSnapshot) -> Unit,
+        isPlaying: Boolean,
+        positionMs: Long? = null,
+        visualizer: PlaybackVisualizerState? = null,
+    ) {
+        val track = queue.getOrNull(currentIndex)
+        val player = mediaPlayer
+        onState(
+            PlaybackSnapshot(
+                currentTrackId = track?.id,
+                isPlaying = isPlaying,
+                visualizer = visualizer,
+                positionMs = positionMs
+                    ?: player?.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L)
+                    ?: lastKnownPositionMs,
+                durationMs = player?.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong()
+                    ?: track?.durationMs
+                    ?: 0L,
+                volume = volume,
+            ),
+        )
+    }
+
+    private fun syntheticVisualizer(playing: Boolean, positionMs: Long = lastKnownPositionMs): PlaybackVisualizerState {
+        if (!playing) return PlaybackVisualizerState.idle(32)
+        val bands = syntheticBands(positionMs)
+        return PlaybackVisualizerState(bands = bands, intensity = bands.average().toFloat(), active = true)
+    }
+
+    private fun syntheticBands(positionMs: Long): List<Float> {
+        val t = positionMs / 1000.0
+        return List(32) { i ->
+            val wave = sin(t * 2.4 + i * 0.55) * 0.5 + 0.5
+            val pulse = sin(t * 5.1 + i * 0.2) * 0.25 + 0.55
+            val noise = Random((positionMs / 80L + i).toInt()).nextFloat() * 0.12f
+            ((wave * pulse).toFloat() + noise).coerceIn(0.08f, 1f)
+        }
+    }
+
+    private fun invalidateSession() {
+        activeSessionId = sessionCounter.incrementAndGet()
+    }
+
+    private fun disposePlayer() {
+        mediaPlayer?.runCatching {
+            stop()
+            dispose()
+        }
+        mediaPlayer = null
     }
 
     private fun ensureStarted() {
         JavaFxRuntime.ensureInitialized()
     }
 
-    /**
-     * Never block the Compose UI thread with CountDownLatch.
-     * Fire-and-forget onto the JavaFX application thread.
-     */
     private fun runOnFxThread(block: () -> Unit) {
         ensureStarted()
         if (Platform.isFxApplicationThread()) {

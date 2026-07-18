@@ -14,6 +14,7 @@ enum class DesktopSection {
     PLAYLISTS,
     LIBRARY,
     IMPORT,
+    SETTINGS,
 }
 
 @Serializable

@@ -237,35 +237,45 @@ class DesktopController(
     }
 
     fun playTrack(trackId: String) {
+        var queueSnapshot: List<TrackRecord> = emptyList()
         mutate { current ->
             val source = when (current.selectedSection) {
                 DesktopSection.PLAYLISTS -> current.selectedPlaylistTracks.ifEmpty { current.snapshot.tracks }
                 DesktopSection.SEARCH -> current.filteredTracks.ifEmpty { current.snapshot.tracks }
                 else -> current.snapshot.tracks
             }
+            val queue = buildPlaybackQueue(source, trackId, current.shuffleEnabled, random)
+            queueSnapshot = queue
             current.copy(
                 currentTrackId = trackId,
-                playbackQueue = buildPlaybackQueue(source, trackId, current.shuffleEnabled, random),
-                visualizer = PlaybackVisualizerState.idle(),
+                playbackQueue = queue,
+                isPlaying = true,
+                visualizer = PlaybackVisualizerState.idle(32).copy(active = true),
                 playbackPositionMs = 0L,
                 playbackDurationMs = source.firstOrNull { it.id == trackId }?.durationMs ?: 0L,
             )
         }
-        playbackBackend.playQueue(state.value.playbackQueue, trackId, ::syncPlaybackState)
+        playbackBackend.playQueue(queueSnapshot, trackId, ::syncPlaybackState)
     }
 
     fun playCurrentPlaylist() {
+        var startId: String? = null
+        var queueSnapshot: List<TrackRecord> = emptyList()
         mutate { current ->
-            val queue = current.selectedPlaylistTracks.ifEmpty { current.snapshot.tracks }
+            val source = current.selectedPlaylistTracks.ifEmpty { current.snapshot.tracks }
+            val queue = buildPlaybackQueue(source, source.firstOrNull()?.id, current.shuffleEnabled, random)
+            queueSnapshot = queue
+            startId = queue.firstOrNull()?.id
             current.copy(
-                currentTrackId = queue.firstOrNull()?.id,
-                playbackQueue = buildPlaybackQueue(queue, queue.firstOrNull()?.id, current.shuffleEnabled, random),
-                visualizer = PlaybackVisualizerState.idle(),
+                currentTrackId = startId,
+                playbackQueue = queue,
+                isPlaying = true,
+                visualizer = PlaybackVisualizerState.idle(32).copy(active = true),
                 playbackPositionMs = 0L,
                 playbackDurationMs = queue.firstOrNull()?.durationMs ?: 0L,
             )
         }
-        playbackBackend.playQueue(state.value.playbackQueue, state.value.currentTrackId, ::syncPlaybackState)
+        playbackBackend.playQueue(queueSnapshot, startId, ::syncPlaybackState)
     }
 
     fun toggleShuffle() {
@@ -284,14 +294,26 @@ class DesktopController(
     }
 
     fun togglePlayPause() {
+        val current = state.value
+        if (current.playbackQueue.isEmpty() && current.currentTrackId == null) {
+            // Nothing queued — start selected playlist / library.
+            playCurrentPlaylist()
+            return
+        }
+        if (current.playbackQueue.isNotEmpty() && !current.isPlaying) {
+            // Optimistic UI so rapid clicks don't feel dead while FX restarts.
+            mutate(persist = false) { it.copy(isPlaying = true) }
+        }
         playbackBackend.togglePlayPause(::syncPlaybackState)
     }
 
     fun playNext() {
+        mutate(persist = false) { it.copy(isPlaying = true) }
         playbackBackend.playNext(::syncPlaybackState)
     }
 
     fun playPrevious() {
+        mutate(persist = false) { it.copy(isPlaying = true) }
         playbackBackend.playPrevious(::syncPlaybackState)
     }
 
