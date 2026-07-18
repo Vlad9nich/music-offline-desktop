@@ -128,14 +128,14 @@ import com.yaneodex.core.state.PlaybackVisualizerState
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
-// Watch Dogs 2 / KAIRSEC palette (site DNA)
+// Watch Dogs 2 HUD — B/W pixel + red signal
 private val Panel = Wd2.Panel
 private val PanelRaised = Wd2.PanelRaised
 private val Outline = Wd2.LineDim
 private val Muted = Wd2.Muted
 private val TextPrimary = Wd2.Text
-private val Moss = Wd2.Ok          // terminal OK / live
-private val Gold = Wd2.Accent      // red accent (was gold)
+private val Moss = Wd2.Text        // "live" reads as white pulse
+private val Gold = Wd2.Accent      // red
 private val Sky = Wd2.TextDim
 private val Coral = Wd2.Warn
 
@@ -207,13 +207,14 @@ fun MusicDesktopApp(
     ) {
         val metrics = remember(maxWidth) {
             when {
-                maxWidth < 1180.dp -> LayoutMetrics(12.dp, 12.dp, 194.dp, 224.dp, 280.dp, 170.dp, true)
-                maxWidth < 1480.dp -> LayoutMetrics(14.dp, 14.dp, 214.dp, 266.dp, 360.dp, 220.dp, false)
-                else -> LayoutMetrics(18.dp, 18.dp, 238.dp, 320.dp, 430.dp, 260.dp, false)
+                maxWidth < 1180.dp -> LayoutMetrics(10.dp, 10.dp, 200.dp, 220.dp, 280.dp, 170.dp, true)
+                maxWidth < 1480.dp -> LayoutMetrics(12.dp, 12.dp, 220.dp, 250.dp, 360.dp, 220.dp, false)
+                else -> LayoutMetrics(14.dp, 14.dp, 240.dp, 280.dp, 430.dp, 260.dp, false)
             }
         }
 
-        AmbientGlow()
+        // Full-screen WD2 atmosphere (pixel grid + static + scanlines)
+        CrtAtmosphere()
         Row(
             modifier = Modifier.fillMaxSize().padding(metrics.pagePadding),
             horizontalArrangement = Arrangement.spacedBy(metrics.sectionGap),
@@ -272,15 +273,29 @@ private fun Sidebar(
     onLanguageChange: (AppLanguage) -> Unit,
 ) {
     Surface(
-        modifier = Modifier.width(metrics.sidebarWidth).fillMaxHeight(),
+        modifier = Modifier
+            .width(metrics.sidebarWidth)
+            .fillMaxHeight()
+            .border(1.dp, Outline),
         color = Panel,
         shape = RoundedCornerShape(0.dp),
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text("KAIRSEC // NODE", color = Gold, style = MaterialTheme.typography.labelMedium, letterSpacing = 2.sp)
+            // Top status bar strip
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Wd2.Accent)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("ctOS", color = TextPrimary, style = MaterialTheme.typography.labelSmall)
+                Text("ONLINE", color = TextPrimary, style = MaterialTheme.typography.labelSmall)
+            }
+            Text("KAIRSEC // NODE", color = Gold, style = MaterialTheme.typography.labelMedium)
             Text(
                 "YANEODEX",
                 color = TextPrimary,
@@ -288,13 +303,14 @@ private fun Sidebar(
                 fontFamily = FontFamily.Monospace,
             )
             Text(
-                "ctOS  DESKTOP  v0.1.2",
+                "DESKTOP  BUILD  0.1.2",
                 color = Muted,
                 style = MaterialTheme.typography.labelSmall,
             )
-            Spacer(Modifier.height(4.dp))
+            Text("────────────────────", color = Outline, style = MaterialTheme.typography.labelSmall, maxLines = 1)
             SidebarNavigation(state.selectedSection, strings, onSelectSection)
             Spacer(Modifier.weight(1f))
+            Text("────────────────────", color = Outline, style = MaterialTheme.typography.labelSmall, maxLines = 1)
             LanguageSwitcher(state.language, strings, onLanguageChange)
         }
     }
@@ -324,14 +340,16 @@ private fun SidebarNavigation(
     )
 
     Box {
-        Box(
+        Row(
             modifier = Modifier
                 .padding(top = highlightOffset)
                 .fillMaxWidth()
                 .height(itemHeight)
-                .clip(RoundedCornerShape(0.dp))
-                .background(Moss.copy(alpha = 0.12f)),
-        )
+                .background(Wd2.AccentSoft),
+        ) {
+            Box(Modifier.width(3.dp).fillMaxHeight().background(Wd2.Accent)) {}
+            Spacer(Modifier.weight(1f))
+        }
         Column(verticalArrangement = Arrangement.spacedBy(itemSpacing)) {
             items.forEach { (section, label, icon) ->
                 NavPill(
@@ -374,7 +392,7 @@ private fun TopBar(
                 onValueChange = onSearchChange,
                 modifier = Modifier.weight(1f),
                 singleLine = true,
-                cursorBrush = SolidColor(Moss),
+                cursorBrush = SolidColor(Wd2.Accent),
                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = TextPrimary),
                 decorationBox = { inner ->
                     if (query.isBlank()) {
@@ -383,7 +401,7 @@ private fun TopBar(
                     inner()
                 },
             )
-            PillButton(strings.runAction, Moss) { onRunParserSearch(query) }
+            PillButton(strings.runAction.uppercase(), Gold) { onRunParserSearch(query) }
         }
     }
 }
@@ -544,16 +562,9 @@ private fun Hero(state: DesktopUiState, strings: DesktopStrings, onPlayPlaylist:
             .fillMaxWidth()
             .height(208.dp)
             .clip(RoundedCornerShape(0.dp))
-            .background(
-                Brush.linearGradient(
-                    listOf(
-                        parseTone(state.spotlight.accent).copy(alpha = 0.22f),
-                        Color(0xFF141716),
-                        Color(0xFF0B0D0C),
-                    ),
-                ),
-            )
-            .padding(horizontal = 20.dp, vertical = 18.dp),
+            .background(Wd2.BgElevated)
+            .border(1.dp, Wd2.Line)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxSize(),
@@ -566,8 +577,8 @@ private fun Hero(state: DesktopUiState, strings: DesktopStrings, onPlayPlaylist:
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        if (state.isPlaying) "> SIGNAL LIVE" else "> SIGNAL IDLE",
-                        color = if (state.isPlaying) Moss else Gold,
+                        if (state.isPlaying) "> SIGNAL // LIVE" else "> SIGNAL // IDLE",
+                        color = if (state.isPlaying) Wd2.Accent else Muted,
                         style = MaterialTheme.typography.labelSmall,
                     )
                     Crossfade(state.currentTrack?.title ?: state.spotlight.title, label = "hero-track-title") { title ->
@@ -857,75 +868,125 @@ private fun BottomPlayer(
     onSetPlaybackVolume: (Float) -> Unit,
     onToggleShuffle: () -> Unit,
 ) {
-    Surface(shape = RoundedCornerShape(0.dp), color = Panel) {
+    // Full-width ctOS player dock — white frame, red live bar, square controls
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Wd2.Line)
+            .background(Wd2.BgElevated),
+    ) {
+        // Top red status strip
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(if (state.isPlaying) Wd2.Accent else Wd2.PanelRaised)
+                .padding(horizontal = 12.dp, vertical = 3.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                if (state.isPlaying) "▶ DECK // LIVE" else "■ DECK // STANDBY",
+                color = TextPrimary,
+                style = MaterialTheme.typography.labelSmall,
+            )
+            Text(
+                "VOL ${(state.playbackVolume * 100).roundToInt()}%",
+                color = TextPrimary,
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
             val compactPlayer = useCompactPlayerLayout(maxWidth.value.toInt())
             if (compactPlayer) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        ArtworkBadge(state.currentTrack?.title?.take(2)?.uppercase() ?: "YN", Moss, compact = true)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        ArtworkBadge(state.currentTrack?.title?.take(2)?.uppercase() ?: "YN", Wd2.Accent, compact = true)
                         Column(modifier = Modifier.weight(1f)) {
                             Crossfade(state.currentTrack?.title ?: strings.noTrackSelected, label = "bottom-track-title-compact") { title ->
-                                Text(title, color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(title.uppercase(), color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            Text(state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                (state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle).uppercase(),
+                                color = Muted,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
+                        PlaybackVisualizer(
+                            state = state.visualizer,
+                            modifier = Modifier.width(88.dp).height(36.dp),
+                            accent = Wd2.Accent,
+                            dense = true,
+                        )
                     }
                     PlaybackTimeline(
                         positionMs = state.playbackPositionMs,
                         durationMs = state.playbackDurationMs,
-                        accent = Moss,
+                        accent = Wd2.Accent,
                         onSeek = onSeekPlayback,
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        RoundAction(Icons.Rounded.Shuffle, state.shuffleEnabled, onToggleShuffle)
-                        VolumeControl(
-                            volume = state.playbackVolume,
-                            accent = Moss,
-                            compact = true,
-                            onChange = onSetPlaybackVolume,
-                        )
-                        RoundAction(Icons.AutoMirrored.Rounded.NavigateBefore, false, onPlayPrevious)
-                        RoundAction(if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, true, onTogglePlayPause)
-                        RoundAction(Icons.AutoMirrored.Rounded.NavigateNext, false, onPlayNext)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        PixelAction(Icons.Rounded.Shuffle, state.shuffleEnabled, onToggleShuffle)
+                        VolumeControl(volume = state.playbackVolume, accent = Wd2.Accent, compact = true, onChange = onSetPlaybackVolume)
+                        Spacer(Modifier.weight(1f))
+                        PixelAction(Icons.AutoMirrored.Rounded.NavigateBefore, false, onPlayPrevious)
+                        PixelAction(if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, true, onTogglePlayPause, primary = true)
+                        PixelAction(Icons.AutoMirrored.Rounded.NavigateNext, false, onPlayNext)
                     }
                 }
             } else {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        ArtworkBadge(state.currentTrack?.title?.take(2)?.uppercase() ?: "YN", Moss)
-                        Column(modifier = Modifier.widthIn(max = metrics.bottomInfoWidth)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.widthIn(max = metrics.bottomInfoWidth + 40.dp),
+                    ) {
+                        ArtworkBadge(state.currentTrack?.title?.take(2)?.uppercase() ?: "YN", Wd2.Accent)
+                        Column {
                             Crossfade(state.currentTrack?.title ?: strings.noTrackSelected, label = "bottom-track-title") { title ->
-                                Text(title, color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(title.uppercase(), color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            Text(state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                (state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle).uppercase(),
+                                color = Muted,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
+                    PlaybackVisualizer(
+                        state = state.visualizer,
+                        modifier = Modifier.width(120.dp).height(40.dp),
+                        accent = Wd2.Accent,
+                        dense = true,
+                    )
                     PlaybackTimeline(
                         positionMs = state.playbackPositionMs,
                         durationMs = state.playbackDurationMs,
-                        accent = Moss,
+                        accent = Wd2.Accent,
                         onSeek = onSeekPlayback,
-                        modifier = Modifier.weight(1f).padding(horizontal = 20.dp),
+                        modifier = Modifier.weight(1f),
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        VolumeControl(
-                            volume = state.playbackVolume,
-                            accent = Moss,
-                            compact = false,
-                            onChange = onSetPlaybackVolume,
-                        )
-                        RoundAction(Icons.Rounded.Shuffle, state.shuffleEnabled, onToggleShuffle)
-                        RoundAction(Icons.AutoMirrored.Rounded.NavigateBefore, false, onPlayPrevious)
-                        RoundAction(if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, true, onTogglePlayPause)
-                        RoundAction(Icons.AutoMirrored.Rounded.NavigateNext, false, onPlayNext)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        VolumeControl(volume = state.playbackVolume, accent = Wd2.Accent, compact = false, onChange = onSetPlaybackVolume)
+                        PixelAction(Icons.Rounded.Shuffle, state.shuffleEnabled, onToggleShuffle)
+                        PixelAction(Icons.AutoMirrored.Rounded.NavigateBefore, false, onPlayPrevious)
+                        PixelAction(if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, true, onTogglePlayPause, primary = true)
+                        PixelAction(Icons.AutoMirrored.Rounded.NavigateNext, false, onPlayNext)
                     }
                 }
             }
@@ -953,13 +1014,12 @@ private fun LanguageSwitcher(language: AppLanguage, strings: DesktopStrings, onL
 private fun LanguageButton(label: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(0.dp))
-            .background(if (selected) Moss else Panel)
-            .border(1.dp, if (selected) Moss.copy(alpha = 0.35f) else Outline, RoundedCornerShape(0.dp))
+            .background(if (selected) Wd2.Accent else Wd2.Bg)
+            .border(1.dp, if (selected) Wd2.Accent else Wd2.Line)
             .pressClickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
-        Text(label, color = if (selected) Color.Black else TextPrimary, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        Text(label, color = TextPrimary, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -1443,7 +1503,7 @@ private fun TextInput(value: String, placeholder: String, modifier: Modifier = M
             .padding(horizontal = 12.dp, vertical = 10.dp),
         singleLine = true,
         textStyle = MaterialTheme.typography.bodyMedium.copy(color = TextPrimary),
-        cursorBrush = SolidColor(Moss),
+        cursorBrush = SolidColor(Wd2.Accent),
         decorationBox = { inner ->
             if (value.isBlank()) {
                 Text(placeholder, color = Muted, style = MaterialTheme.typography.bodyMedium)
@@ -1487,7 +1547,7 @@ private fun CompactNowPlayingCard(title: String, subtitle: String) {
 @Composable
 private fun EmptyState(title: String) {
     Surface(shape = RoundedCornerShape(0.dp), color = Panel) {
-        Box(modifier = Modifier.fillMaxWidth().padding(18.dp), contentAlignment = Alignment.CenterStart) {
+        Box(Modifier.fillMaxWidth().padding(18.dp), contentAlignment = Alignment.CenterStart) {
             Text(title, color = Muted, style = MaterialTheme.typography.bodyLarge)
         }
     }
@@ -1495,7 +1555,13 @@ private fun EmptyState(title: String) {
 
 @Composable
 private fun SectionTitle(title: String) {
-    Text(title, color = TextPrimary, style = MaterialTheme.typography.titleLarge)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(Modifier.width(12.dp).height(12.dp).background(Wd2.Accent)) {}
+        Text(title.uppercase(), color = TextPrimary, style = MaterialTheme.typography.titleLarge)
+    }
 }
 
 @Composable
@@ -1521,15 +1587,15 @@ private fun NavPill(label: String, icon: androidx.compose.ui.graphics.vector.Ima
 private fun AccentAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, color: Color, onClick: () -> Unit) {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(0.dp))
-            .background(color.copy(alpha = 0.14f))
+            .background(if (color == Gold || color == Wd2.Accent) Wd2.Accent else color.copy(alpha = 0.2f))
+            .border(1.dp, Wd2.Line)
             .pressClickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(18.dp))
-        Text(label, color = TextPrimary, style = MaterialTheme.typography.bodyMedium)
+        Icon(icon, contentDescription = label, tint = TextPrimary, modifier = Modifier.size(18.dp))
+        Text(label.uppercase(), color = TextPrimary, style = MaterialTheme.typography.labelMedium)
     }
 }
 
@@ -1650,12 +1716,12 @@ private fun VolumeControl(
 private fun PillButton(label: String, color: Color, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(0.dp))
             .background(color)
+            .border(1.dp, Wd2.Line)
             .pressClickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        Text(label, color = Color.Black, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+        Text(label, color = TextPrimary, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -1696,12 +1762,19 @@ private fun MiniPanel(title: String, value: String, icon: androidx.compose.ui.gr
 
 @Composable
 private fun ArtworkBadge(label: String, color: Color, compact: Boolean = false) {
-    val size = if (compact) 42.dp else 52.dp
-    val corner = if (compact) 14.dp else 16.dp
-    Box(modifier = Modifier.size(size).clip(RoundedCornerShape(corner)).background(color), contentAlignment = Alignment.Center) {
+    val size = if (compact) 40.dp else 48.dp
+    Box(
+        modifier = Modifier
+            .size(size)
+            .background(Wd2.Bg)
+            .border(1.dp, color)
+            .padding(2.dp)
+            .background(color.copy(alpha = 0.15f)),
+        contentAlignment = Alignment.Center,
+    ) {
         Text(
             label,
-            color = Color.Black,
+            color = color,
             fontWeight = FontWeight.Black,
             style = if (compact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
             maxLines = 1,
@@ -1720,54 +1793,57 @@ private fun RecordHalo(modifier: Modifier = Modifier) {
 }
 
 @Composable
+private fun PixelAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    active: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    primary: Boolean = false,
+) {
+    RoundAction(icon = icon, active = active, onClick = onClick, modifier = modifier, primary = primary)
+}
+
+@Composable
 private fun RoundAction(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     active: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    primary: Boolean = false,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val hovered by interactionSource.collectIsHoveredAsState()
     val scale by animateFloatAsState(
         targetValue = when {
-            pressed -> 0.9f
-            hovered -> 1.05f
+            pressed -> 0.94f
+            hovered -> 1.02f
             else -> 1f
         },
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioMediumBouncy),
+        animationSpec = tween(100),
         label = "player-button-scale",
     )
-    val yOffset by animateDpAsState(
-        targetValue = when {
-            pressed -> 1.dp
-            hovered -> (-2).dp
-            else -> 0.dp
-        },
-        animationSpec = spring(stiffness = Spring.StiffnessLow),
-        label = "player-button-offset",
-    )
-    val glowAlpha by animateFloatAsState(
-        targetValue = when {
-            pressed -> 0.26f
-            hovered || active -> 0.18f
-            else -> 0f
-        },
-        animationSpec = tween(140),
-        label = "player-button-glow",
-    )
+
+    val bg = when {
+        primary && (active || true) -> if (active) Wd2.Accent else Wd2.AccentDim
+        active -> Wd2.AccentSoft
+        hovered -> PanelRaised
+        else -> Wd2.Bg
+    }
+    val borderCol = when {
+        primary || active || hovered -> Wd2.Accent
+        else -> Wd2.Line
+    }
 
     Box(
         modifier = modifier
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
-                translationY = yOffset.toPx()
             }
-            .size(46.dp)
-            .clip(CircleShape)
-            .background(if (active) Moss.copy(alpha = 0.16f + glowAlpha * 0.35f) else PanelRaised)
-            .border(1.dp, if (active || hovered) Moss.copy(alpha = 0.4f + glowAlpha * 0.45f) else Outline, CircleShape)
+            .size(if (primary) 48.dp else 42.dp)
+            .background(bg)
+            .border(1.dp, borderCol)
             .hoverable(interactionSource = interactionSource)
             .clickable(
                 interactionSource = interactionSource,
@@ -1779,22 +1855,81 @@ private fun RoundAction(
         Icon(
             icon,
             contentDescription = null,
-            tint = if (active || hovered) Moss else TextPrimary,
-            modifier = Modifier.graphicsLayer {
-                scaleX = if (pressed) 0.94f else 1f
-                scaleY = if (pressed) 0.94f else 1f
+            tint = when {
+                primary -> TextPrimary
+                active || hovered -> Wd2.Accent
+                else -> TextPrimary
             },
+            modifier = Modifier.size(20.dp),
         )
     }
 }
 
+/** Full-screen pixel grid + scanlines + static interference (WD2 HUD). */
 @Composable
-private fun AmbientGlow() {
+private fun CrtAtmosphere() {
+    val transition = rememberInfiniteTransition(label = "crt-static")
+    val phase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(animation = tween(900)),
+        label = "crt-static-phase",
+    )
     Canvas(modifier = Modifier.fillMaxSize()) {
-        drawCircle(brush = Brush.radialGradient(listOf(Moss.copy(alpha = 0.05f), Color.Transparent)), radius = 420f, center = Offset(size.width * 0.72f, size.height * 0.12f))
-        drawCircle(brush = Brush.radialGradient(listOf(Gold.copy(alpha = 0.035f), Color.Transparent)), radius = 340f, center = Offset(size.width * 0.14f, size.height * 0.82f))
+        // Pixel grid
+        val step = 6f
+        var x = 0f
+        while (x < size.width) {
+            drawRect(Wd2.LineFaint, Offset(x, 0f), Size(1f, size.height))
+            x += step
+        }
+        var y = 0f
+        while (y < size.height) {
+            drawRect(Wd2.LineFaint, Offset(0f, y), Size(size.width, 1f))
+            y += step
+        }
+        // Horizontal scanlines
+        y = 0f
+        while (y < size.height) {
+            drawRect(Color(0x0AFFFFFF), Offset(0f, y), Size(size.width, 1f))
+            y += 3f
+        }
+        // Red vignette corners
+        drawCircle(
+            brush = Brush.radialGradient(listOf(Wd2.Accent.copy(alpha = 0.07f), Color.Transparent)),
+            radius = size.minDimension * 0.55f,
+            center = Offset(size.width * 0.08f, size.height * 0.12f),
+        )
+        drawCircle(
+            brush = Brush.radialGradient(listOf(Wd2.Accent.copy(alpha = 0.05f), Color.Transparent)),
+            radius = size.minDimension * 0.5f,
+            center = Offset(size.width * 0.92f, size.height * 0.88f),
+        )
+        // Moving interference band
+        val bandY = (size.height * phase) % size.height
+        drawRect(
+            color = Wd2.Accent.copy(alpha = 0.04f),
+            topLeft = Offset(0f, bandY),
+            size = Size(size.width, 18f),
+        )
+        // Speckle noise (cheap pseudo-random from phase)
+        val seed = (phase * 9973).toInt()
+        var i = 0
+        while (i < 48) {
+            val nx = ((seed * (i + 3) * 17) % size.width.toInt()).toFloat().coerceAtLeast(0f)
+            val ny = ((seed * (i + 7) * 31) % size.height.toInt()).toFloat().coerceAtLeast(0f)
+            drawRect(
+                color = if (i % 3 == 0) Wd2.Accent.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.06f),
+                topLeft = Offset(nx, ny),
+                size = Size(2f, 2f),
+            )
+            i++
+        }
     }
 }
+
+@Composable
+private fun AmbientGlow() = CrtAtmosphere()
 
 private fun parseTone(value: String): Color = when (value) {
     "#95F15A", "#A7F46A" -> Moss
