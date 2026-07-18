@@ -30,7 +30,9 @@ import com.yaneodex.desktop.integration.WindowsOcrClient
 import com.yaneodex.desktop.ui.desktopStrings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,6 +58,7 @@ class DesktopController(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow(buildInitialState())
     val state: StateFlow<DesktopUiState> = _state.asStateFlow()
+    private var persistJob: Job? = null
 
     init {
         playbackBackend.setVolume(_state.value.playbackVolume, ::syncPlaybackState)
@@ -582,9 +585,19 @@ class DesktopController(
         _state.update { current ->
             val updated = transform(current)
             if (persist) {
-                persistence.save(updated)
+                // Debounce disk writes — search/section ticks no longer hammer state.json.
+                schedulePersist(updated)
             }
             updated
+        }
+    }
+
+    private fun schedulePersist(@Suppress("UNUSED_PARAMETER") state: DesktopUiState) {
+        persistJob?.cancel()
+        persistJob = scope.launch {
+            delay(400)
+            // Always persist the latest state after the quiet period.
+            persistence.save(_state.value)
         }
     }
 

@@ -8,7 +8,6 @@ import javafx.application.Platform
 import javafx.scene.media.Media
 import javafx.scene.media.MediaPlayer
 import javafx.util.Duration
-import java.util.concurrent.CountDownLatch
 import kotlin.math.pow
 
 class JavaFxPlaybackBackend : PlaybackBackend {
@@ -17,6 +16,8 @@ class JavaFxPlaybackBackend : PlaybackBackend {
     private var mediaPlayer: MediaPlayer? = null
     private var volume: Float = 0.72f
     private var playbackSessionId: Long = 0L
+    private var lastTimelineEmitAtMs: Long = 0L
+    private var lastSpectrumEmitAtMs: Long = 0L
 
     override fun playQueue(
         queue: List<TrackRecord>,
@@ -43,13 +44,13 @@ class JavaFxPlaybackBackend : PlaybackBackend {
                             currentTrackId = queue.getOrNull(currentIndex)?.id,
                             isPlaying = false,
                             visualizer = PlaybackVisualizerState.idle(),
-                        positionMs = player.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: 0L,
-                        durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong()
-                            ?: queue.getOrNull(currentIndex)?.durationMs
-                            ?: 0L,
-                        volume = volume,
-                    ),
-                )
+                            positionMs = player.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: 0L,
+                            durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong()
+                                ?: queue.getOrNull(currentIndex)?.durationMs
+                                ?: 0L,
+                            volume = volume,
+                        ),
+                    )
                 }
                 else -> {
                     player.play()
@@ -57,13 +58,13 @@ class JavaFxPlaybackBackend : PlaybackBackend {
                         PlaybackSnapshot(
                             currentTrackId = queue.getOrNull(currentIndex)?.id,
                             isPlaying = true,
-                        positionMs = player.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: 0L,
-                        durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong()
-                            ?: queue.getOrNull(currentIndex)?.durationMs
-                            ?: 0L,
-                        volume = volume,
-                    ),
-                )
+                            positionMs = player.currentTime?.toMillis()?.toLong()?.coerceAtLeast(0L) ?: 0L,
+                            durationMs = player.totalDuration?.toMillis()?.takeIf { it.isFinite() && it > 0 }?.toLong()
+                                ?: queue.getOrNull(currentIndex)?.durationMs
+                                ?: 0L,
+                            volume = volume,
+                        ),
+                    )
                 }
             }
         }
@@ -144,10 +145,15 @@ class JavaFxPlaybackBackend : PlaybackBackend {
             val player = MediaPlayer(Media(track.uri))
             player.volume = volume.toDouble()
             player.audioSpectrumNumBands = 32
-            player.audioSpectrumInterval = 0.05
+            // 10 Hz spectrum is enough for UI bars; was 20 Hz (0.05s).
+            player.audioSpectrumInterval = 0.1
             player.audioSpectrumThreshold = -70
             player.currentTimeProperty().addListener { _, _, currentTime ->
                 if (sessionId != playbackSessionId || mediaPlayer !== player) return@addListener
+                val now = System.currentTimeMillis()
+                // Throttle timeline UI updates to ~6–7 fps (was every media tick).
+                if (now - lastTimelineEmitAtMs < 150L) return@addListener
+                lastTimelineEmitAtMs = now
                 onState(
                     PlaybackSnapshot(
                         currentTrackId = track.id,
@@ -160,6 +166,9 @@ class JavaFxPlaybackBackend : PlaybackBackend {
             }
             player.setAudioSpectrumListener { _, _, magnitudes, _ ->
                 if (sessionId != playbackSessionId || mediaPlayer !== player) return@setAudioSpectrumListener
+                val now = System.currentTimeMillis()
+                if (now - lastSpectrumEmitAtMs < 80L) return@setAudioSpectrumListener
+                lastSpectrumEmitAtMs = now
                 val reactiveBands = magnitudes.mapIndexed { index, magnitude ->
                     val normalized = ((magnitude + 70f) / 70f).coerceIn(0f, 1f)
                     val bassBias = when {
@@ -244,20 +253,16 @@ class JavaFxPlaybackBackend : PlaybackBackend {
         JavaFxRuntime.ensureInitialized()
     }
 
+    /**
+     * Never block the Compose UI thread with CountDownLatch.
+     * Fire-and-forget onto the JavaFX application thread.
+     */
     private fun runOnFxThread(block: () -> Unit) {
         ensureStarted()
         if (Platform.isFxApplicationThread()) {
             block()
-            return
+        } else {
+            Platform.runLater(block)
         }
-        val latch = CountDownLatch(1)
-        Platform.runLater {
-            try {
-                block()
-            } finally {
-                latch.countDown()
-            }
-        }
-        latch.await()
     }
 }

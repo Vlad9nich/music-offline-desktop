@@ -42,6 +42,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -1014,9 +1016,16 @@ private fun TrackList(
     rowActions: List<TrackActionSpec> = emptyList(),
     bulkActions: List<TrackBulkActionSpec> = emptyList(),
 ) {
-    var selectedTrackIds by remember(tracks.map { it.id }) { mutableStateOf(emptySet<String>()) }
+    val trackIdsKey = remember(tracks) { tracks.map { it.id } }
+    var selectedTrackIds by remember(trackIdsKey) { mutableStateOf(emptySet<String>()) }
     val selectionEnabled = bulkActions.isNotEmpty()
     val selectionMode = selectionEnabled && selectedTrackIds.isNotEmpty()
+    // Cap height so LazyColumn can virtualize inside parent verticalScroll safely.
+    val listMaxHeight = when {
+        tracks.size <= 6 -> (tracks.size * 88).coerceAtLeast(120).dp
+        tracks.size <= 40 -> 420.dp
+        else -> 520.dp
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (selectionMode) {
@@ -1031,102 +1040,110 @@ private fun TrackList(
                 onClear = { selectedTrackIds = emptySet() },
             )
         }
-        tracks.forEachIndexed { index, track ->
-            val selected = track.id in selectedTrackIds
-            BoxWithConstraints(
+        if (tracks.isEmpty()) {
+            EmptyState(strings.emptyStateTitle)
+        } else {
+            LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 78.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(
-                        when {
-                            selected -> Gold.copy(alpha = 0.09f)
-                            track.id == currentTrackId -> Moss.copy(alpha = 0.08f)
-                            else -> Panel
-                        },
-                    )
-                    .border(
-                        1.dp,
-                        when {
-                            selected -> Gold.copy(alpha = 0.34f)
-                            track.id == currentTrackId -> Moss.copy(alpha = 0.24f)
-                            else -> Outline
-                        },
-                        RoundedCornerShape(18.dp),
-                    )
-                    .pressClickable {
-                        if (selectionMode) {
-                            selectedTrackIds = if (selected) selectedTrackIds - track.id else selectedTrackIds + track.id
-                        } else {
-                            onPlayTrack(track.id)
-                        }
-                    }
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                    .heightIn(max = listMaxHeight),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                val compactRow = useCompactTrackRowLayout(maxWidth.value.toInt())
-                if (compactRow) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            if (selectionEnabled) {
-                                SelectionToggleButton(
-                                    selected = selected,
-                                    onClick = {
-                                        selectedTrackIds = if (selected) selectedTrackIds - track.id else selectedTrackIds + track.id
-                                    },
-                                )
-                            }
-                            ArtworkBadge(track.title.take(2).uppercase(), Moss, compact = true)
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(track.title, color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(track.artist, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("${index + 1}".padStart(2, '0'), color = Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(28.dp))
-                            Spacer(Modifier.weight(1f))
-                            rowActions.forEach { action ->
-                                RowActionChip(track.id, action.label, action.onClick)
-                            }
-                            Text(formatDuration(track.durationMs), color = if (track.id == currentTrackId) Moss else Muted, style = MaterialTheme.typography.labelMedium)
-                        }
-                    }
-                } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    ) {
-                        Text("${index + 1}".padStart(2, '0'), color = Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(28.dp))
-                        if (selectionEnabled) {
-                            SelectionToggleButton(
-                                selected = selected,
-                                onClick = {
-                                    selectedTrackIds = if (selected) selectedTrackIds - track.id else selectedTrackIds + track.id
+                itemsIndexed(tracks, key = { _, track -> track.id }) { index, track ->
+                    val selected = track.id in selectedTrackIds
+                    BoxWithConstraints(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 64.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(
+                                when {
+                                    selected -> Gold.copy(alpha = 0.09f)
+                                    track.id == currentTrackId -> Moss.copy(alpha = 0.08f)
+                                    else -> Panel
                                 },
                             )
+                            .border(
+                                1.dp,
+                                when {
+                                    selected -> Gold.copy(alpha = 0.34f)
+                                    track.id == currentTrackId -> Moss.copy(alpha = 0.24f)
+                                    else -> Outline
+                                },
+                                RoundedCornerShape(16.dp),
+                            )
+                            .pressClickable {
+                                if (selectionMode) {
+                                    selectedTrackIds = if (selected) selectedTrackIds - track.id else selectedTrackIds + track.id
+                                } else {
+                                    onPlayTrack(track.id)
+                                }
+                            }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                    ) {
+                        val compactRow = useCompactTrackRowLayout(maxWidth.value.toInt())
+                        if (compactRow) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    if (selectionEnabled) {
+                                        SelectionToggleButton(
+                                            selected = selected,
+                                            onClick = {
+                                                selectedTrackIds = if (selected) selectedTrackIds - track.id else selectedTrackIds + track.id
+                                            },
+                                        )
+                                    }
+                                    ArtworkBadge(track.title.take(2).uppercase(), Moss, compact = true)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(track.title, color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(track.artist, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text("${index + 1}".padStart(2, '0'), color = Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(28.dp))
+                                    Spacer(Modifier.weight(1f))
+                                    rowActions.forEach { action ->
+                                        RowActionChip(track.id, action.label, action.onClick)
+                                    }
+                                    Text(formatDuration(track.durationMs), color = if (track.id == currentTrackId) Moss else Muted, style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            ) {
+                                Text("${index + 1}".padStart(2, '0'), color = Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(28.dp))
+                                if (selectionEnabled) {
+                                    SelectionToggleButton(
+                                        selected = selected,
+                                        onClick = {
+                                            selectedTrackIds = if (selected) selectedTrackIds - track.id else selectedTrackIds + track.id
+                                        },
+                                    )
+                                }
+                                ArtworkBadge(track.title.take(2).uppercase(), Moss, compact = true)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(track.title, color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(track.artist, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                rowActions.forEach { action ->
+                                    RowActionChip(track.id, action.label, action.onClick)
+                                }
+                                Text(formatDuration(track.durationMs), color = if (track.id == currentTrackId) Moss else Muted, style = MaterialTheme.typography.labelMedium)
+                            }
                         }
-                        ArtworkBadge(track.title.take(2).uppercase(), Moss, compact = true)
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(track.title, color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(track.artist, color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        rowActions.forEach { action ->
-                            RowActionChip(track.id, action.label, action.onClick)
-                        }
-                        Text(formatDuration(track.durationMs), color = if (track.id == currentTrackId) Moss else Muted, style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
-        }
-        if (tracks.isEmpty()) {
-            EmptyState(strings.emptyStateTitle)
         }
     }
 }

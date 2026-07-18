@@ -13,7 +13,7 @@ class DesktopPersistence(
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
-        prettyPrint = true
+        prettyPrint = false
     }
 
     fun load(): PersistedDesktopState? {
