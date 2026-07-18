@@ -86,6 +86,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.composed
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -125,9 +126,10 @@ import com.yaneodex.core.state.PlaybackVisualizerState
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
-private val Panel = Color(0xFF111313)
-private val PanelRaised = Color(0xFF171A1A)
-private val Outline = Color(0x1FFFFFFF)
+// Surfaces: flatter, less border-heavy chrome (same moss/gold DNA)
+private val Panel = Color(0xFF121414)
+private val PanelRaised = Color(0xFF181B1A)
+private val Outline = Color(0x12FFFFFF)
 private val Muted = Color(0xFF8A928B)
 private val TextPrimary = Color(0xFFF4F7F3)
 private val Moss = Color(0xFFA7F46A)
@@ -269,11 +271,11 @@ private fun Sidebar(
     Surface(
         modifier = Modifier.width(metrics.sidebarWidth).fillMaxHeight(),
         color = Panel,
-        shape = RoundedCornerShape(30.dp),
+        shape = RoundedCornerShape(22.dp),
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text("YND", color = Moss, style = MaterialTheme.typography.labelMedium, letterSpacing = 2.sp)
             Text(
@@ -282,7 +284,7 @@ private fun Sidebar(
                 style = MaterialTheme.typography.headlineLarge,
                 fontFamily = FontFamily.Serif,
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
             SidebarNavigation(state.selectedSection, strings, onSelectSection)
             Spacer(Modifier.weight(1f))
             LanguageSwitcher(state.language, strings, onLanguageChange)
@@ -304,11 +306,11 @@ private fun SidebarNavigation(
         Triple(DesktopSection.IMPORT, strings.navImport, Icons.Rounded.AutoAwesome),
     )
     val selectedIndex = items.indexOfFirst { it.first == selectedSection }.coerceAtLeast(0)
-    val itemHeight = 56.dp
-    val itemSpacing = 12.dp
+    val itemHeight = 44.dp
+    val itemSpacing = 4.dp
     val highlightOffset by animateDpAsState(
         targetValue = (itemHeight + itemSpacing) * selectedIndex,
-        animationSpec = spring(stiffness = Spring.StiffnessLow, dampingRatio = Spring.DampingRatioNoBouncy),
+        animationSpec = tween(220),
         label = "sidebar-selection-offset",
     )
 
@@ -318,9 +320,8 @@ private fun SidebarNavigation(
                 .padding(top = highlightOffset)
                 .fillMaxWidth()
                 .height(itemHeight)
-                .clip(RoundedCornerShape(20.dp))
-                .background(Moss.copy(alpha = 0.14f))
-                .border(1.dp, Moss.copy(alpha = 0.34f), RoundedCornerShape(20.dp)),
+                .clip(RoundedCornerShape(14.dp))
+                .background(Moss.copy(alpha = 0.12f)),
         )
         Column(verticalArrangement = Arrangement.spacedBy(itemSpacing)) {
             items.forEach { (section, label, icon) ->
@@ -405,10 +406,10 @@ private fun MainColumn(
     onOcrTokenChange: (String) -> Unit,
     onPickScreenshots: () -> Unit,
 ) {
-    Surface(modifier = modifier, color = Color(0xCC101111), shape = RoundedCornerShape(32.dp)) {
+    Surface(modifier = modifier, color = Color(0xCC101111), shape = RoundedCornerShape(22.dp)) {
         Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(if (metrics.compact) 16.dp else 22.dp),
-            verticalArrangement = Arrangement.spacedBy(if (metrics.compact) 16.dp else 20.dp),
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(if (metrics.compact) 14.dp else 18.dp),
+            verticalArrangement = Arrangement.spacedBy(if (metrics.compact) 14.dp else 16.dp),
         ) {
             Hero(state, strings, onPlayPlaylist)
             Box(
@@ -419,11 +420,8 @@ private fun MainColumn(
                 AnimatedContent(
                     targetState = state.selectedSection,
                     transitionSpec = {
-                        val direction = if (targetState.ordinal > initialState.ordinal) 1 else -1
-                        (fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
-                            slideInHorizontally(animationSpec = spring(stiffness = Spring.StiffnessLow)) { fullWidth -> direction * fullWidth / 10 }) togetherWith
-                            (fadeOut(animationSpec = tween(180)) +
-                                slideOutHorizontally(animationSpec = tween(180)) { fullWidth -> -direction * fullWidth / 14 })
+                        // Calmer: fade only (no slide springs)
+                        (fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(160)))
                     },
                     contentAlignment = Alignment.TopStart,
                     label = "desktop-section-transition",
@@ -491,59 +489,59 @@ private fun Hero(state: DesktopUiState, strings: DesktopStrings, onPlayPlaylist:
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(268.dp)
-            .clip(RoundedCornerShape(30.dp))
+            .height(208.dp)
+            .clip(RoundedCornerShape(20.dp))
             .background(
                 Brush.linearGradient(
                     listOf(
-                        parseTone(state.spotlight.accent).copy(alpha = 0.42f),
-                        Color(0xFF1A1E1B),
-                        Color(0xFF0D0F0E),
+                        parseTone(state.spotlight.accent).copy(alpha = 0.22f),
+                        Color(0xFF141716),
+                        Color(0xFF0B0D0C),
                     ),
                 ),
             )
-            .border(1.dp, Outline, RoundedCornerShape(30.dp))
-            .padding(24.dp),
+            .padding(horizontal = 20.dp, vertical = 18.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxSize(),
-            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(
                 modifier = Modifier.weight(1.05f).fillMaxHeight(),
                 verticalArrangement = Arrangement.SpaceBetween,
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        "NOW // PLAYING",
+                        color = Moss.copy(alpha = 0.85f),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
                     Crossfade(state.currentTrack?.title ?: state.spotlight.title, label = "hero-track-title") { title ->
                         Text(title, color = TextPrimary, style = MaterialTheme.typography.displayLarge, fontFamily = FontFamily.Serif, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Text(
                         state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle,
-                        color = Color(0xFFD8DDD8),
+                        color = Color(0xFFC8CDC8),
                         style = MaterialTheme.typography.bodyLarge,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        AccentAction(strings.playLaneAction, Icons.Rounded.PlayArrow, Moss, onPlayPlaylist)
-                    }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AccentAction(strings.playLaneAction, Icons.Rounded.PlayArrow, Moss, onPlayPlaylist)
                 }
             }
             Box(
-                modifier = Modifier.weight(0.95f).fillMaxHeight().clip(RoundedCornerShape(26.dp))
-                    .background(
-                        Brush.radialGradient(
-                            listOf(parseTone(state.spotlight.accent).copy(alpha = 0.32f), Color.Transparent),
-                            radius = 380f,
-                        ),
-                    ),
+                modifier = Modifier
+                    .weight(0.95f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0x22101010)),
             ) {
                 PlaybackVisualizer(
                     state = state.visualizer,
-                    modifier = Modifier.align(Alignment.Center).fillMaxWidth().height(150.dp).padding(horizontal = 18.dp),
+                    modifier = Modifier.align(Alignment.Center).fillMaxWidth().height(128.dp).padding(horizontal = 14.dp),
                     accent = parseTone(state.spotlight.accent),
                     dense = true,
                 )
@@ -729,20 +727,59 @@ private fun RightRail(
     onToggleShuffle: () -> Unit,
     onPlayTrack: (String) -> Unit,
 ) {
-    Surface(modifier = Modifier.width(metrics.rightRailWidth).fillMaxHeight(), color = Color(0xCC101111), shape = RoundedCornerShape(32.dp)) {
-        Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Surface(modifier = Modifier.width(metrics.rightRailWidth).fillMaxHeight(), color = Color(0xCC101111), shape = RoundedCornerShape(22.dp)) {
+        Column(modifier = Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(strings.sectionNowShaping, color = Gold, style = MaterialTheme.typography.labelSmall)
             CompactNowPlayingCard(
                 title = state.currentTrack?.title ?: strings.noTrackSelected,
                 subtitle = state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle,
             )
-            MiniPanel(strings.queueLabel, "${state.playbackQueue.size} ${strings.queueItemsSuffix}", Icons.AutoMirrored.Rounded.QueueMusic, Moss)
-            MiniPanel(strings.shuffleLabel, if (state.shuffleEnabled) strings.shuffleOn else strings.shuffleOff, Icons.Rounded.Shuffle, Sky, onToggleShuffle)
-            MiniPanel(strings.parserLabel, state.parserStatus, Icons.Rounded.Sync, Gold)
-            MiniPanel(strings.ocrLabel, state.ocrStatus, Icons.Rounded.AutoAwesome, Coral)
+            // Single quiet status strip instead of 4 bordered MiniPanels
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(PanelRaised)
+                    .pressClickable(onClick = onToggleShuffle)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "${strings.queueLabel.uppercase()}  ${state.playbackQueue.size}",
+                        color = Moss,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    Text(
+                        if (state.shuffleEnabled) strings.shuffleOn else strings.shuffleOff,
+                        color = TextPrimary,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Icon(
+                    Icons.Rounded.Shuffle,
+                    contentDescription = strings.shuffleLabel,
+                    tint = if (state.shuffleEnabled) Moss else Muted,
+                )
+            }
+            Text(
+                state.parserStatus,
+                color = Muted,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                state.ocrStatus,
+                color = Muted.copy(alpha = 0.85f),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
             Text(strings.sectionUpNext, color = Muted, style = MaterialTheme.typography.labelMedium)
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                state.playbackQueue.take(if (metrics.compact) 3 else 4).forEach { track -> QueueRow(track, onPlayTrack, compact = true) }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                state.playbackQueue.take(if (metrics.compact) 3 else 5).forEach { track -> QueueRow(track, onPlayTrack, compact = true) }
             }
         }
     }
@@ -1022,9 +1059,9 @@ private fun TrackList(
     val selectionMode = selectionEnabled && selectedTrackIds.isNotEmpty()
     // Cap height so LazyColumn can virtualize inside parent verticalScroll safely.
     val listMaxHeight = when {
-        tracks.size <= 6 -> (tracks.size * 88).coerceAtLeast(120).dp
-        tracks.size <= 40 -> 420.dp
-        else -> 520.dp
+        tracks.size <= 8 -> (tracks.size * 56).coerceAtLeast(100).dp
+        tracks.size <= 40 -> 400.dp
+        else -> 480.dp
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1054,23 +1091,26 @@ private fun TrackList(
                     BoxWithConstraints(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 64.dp)
-                            .clip(RoundedCornerShape(16.dp))
+                            .heightIn(min = 48.dp)
+                            .clip(RoundedCornerShape(12.dp))
                             .background(
                                 when {
-                                    selected -> Gold.copy(alpha = 0.09f)
-                                    track.id == currentTrackId -> Moss.copy(alpha = 0.08f)
-                                    else -> Panel
+                                    selected -> Gold.copy(alpha = 0.08f)
+                                    track.id == currentTrackId -> Moss.copy(alpha = 0.07f)
+                                    else -> Color.Transparent
                                 },
                             )
-                            .border(
-                                1.dp,
-                                when {
-                                    selected -> Gold.copy(alpha = 0.34f)
-                                    track.id == currentTrackId -> Moss.copy(alpha = 0.24f)
-                                    else -> Outline
+                            // Quiet selection hairline instead of full border chrome
+                            .then(
+                                if (track.id == currentTrackId || selected) {
+                                    Modifier.border(
+                                        width = 0.dp,
+                                        color = Color.Transparent,
+                                        shape = RoundedCornerShape(12.dp),
+                                    )
+                                } else {
+                                    Modifier
                                 },
-                                RoundedCornerShape(16.dp),
                             )
                             .pressClickable {
                                 if (selectionMode) {
@@ -1079,7 +1119,7 @@ private fun TrackList(
                                     onPlayTrack(track.id)
                                 }
                             }
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
                     ) {
                         val compactRow = useCompactTrackRowLayout(maxWidth.value.toInt())
                         if (compactRow) {
@@ -1310,19 +1350,23 @@ private fun QueueRow(track: TrackRecord, onPlayTrack: (String) -> Unit, compact:
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = if (compact) 58.dp else 72.dp)
-            .clip(RoundedCornerShape(if (compact) 16.dp else 18.dp))
-            .background(Panel)
-            .border(1.dp, Outline, RoundedCornerShape(if (compact) 16.dp else 18.dp))
+            .heightIn(min = if (compact) 42.dp else 56.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (compact) Color.Transparent else PanelRaised)
             .pressClickable { onPlayTrack(track.id) }
-            .padding(horizontal = if (compact) 10.dp else 12.dp, vertical = if (compact) 9.dp else 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 12.dp),
+            .padding(horizontal = if (compact) 6.dp else 10.dp, vertical = if (compact) 6.dp else 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ArtworkBadge(track.title.take(2).uppercase(), Moss, compact = compact)
+        Text(
+            track.title.take(1).uppercase(),
+            color = Moss,
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.width(16.dp),
+        )
         Column(modifier = Modifier.weight(1f)) {
-            Text(track.title, color = TextPrimary, style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(track.artist, color = Muted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(track.title, color = TextPrimary, style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(track.artist, color = Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -1369,11 +1413,14 @@ private fun StatusCard(title: String, body: String) {
 
 @Composable
 private fun CompactNowPlayingCard(title: String, subtitle: String) {
-    Surface(shape = RoundedCornerShape(20.dp), color = Panel) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title.uppercase(), color = Gold, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(subtitle, color = TextPrimary, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(title, color = TextPrimary, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(subtitle, color = Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -1396,18 +1443,17 @@ private fun NavPill(label: String, icon: androidx.compose.ui.graphics.vector.Ima
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(56.dp)
-            .clip(RoundedCornerShape(20.dp))
+            .height(44.dp)
+            .clip(RoundedCornerShape(14.dp))
             .background(Color.Transparent)
-            .border(1.dp, if (selected) Color.Transparent else Outline, RoundedCornerShape(20.dp))
             .interactiveClickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 14.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val tint by animateColor(selected = selected)
-        Icon(icon, contentDescription = label, tint = tint)
-        Text(label, color = if (selected) TextPrimary else Muted, style = MaterialTheme.typography.bodyLarge)
+        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(20.dp))
+        Text(label, color = if (selected) TextPrimary else Muted, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -1415,15 +1461,14 @@ private fun NavPill(label: String, icon: androidx.compose.ui.graphics.vector.Ima
 private fun AccentAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, color: Color, onClick: () -> Unit) {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(22.dp))
-            .background(color.copy(alpha = 0.12f))
-            .border(1.dp, color.copy(alpha = 0.32f), RoundedCornerShape(22.dp))
+            .clip(RoundedCornerShape(14.dp))
+            .background(color.copy(alpha = 0.14f))
             .pressClickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = label, tint = color)
+        Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(18.dp))
         Text(label, color = TextPrimary, style = MaterialTheme.typography.bodyMedium)
     }
 }
@@ -1570,20 +1615,18 @@ private fun AccentChip(label: String, background: Color, onClick: (() -> Unit)? 
 
 @Composable
 private fun MiniPanel(title: String, value: String, icon: androidx.compose.ui.graphics.vector.ImageVector, accent: Color, onClick: (() -> Unit)? = null) {
+    // Kept for other call sites; lighter chrome (fill only)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(Panel)
-            .border(1.dp, Outline, RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(12.dp))
+            .background(PanelRaised)
             .pressClickable(enabled = onClick != null) { onClick?.invoke() }
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(modifier = Modifier.size(34.dp).clip(CircleShape).background(accent.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
-            Icon(icon, contentDescription = null, tint = accent)
-        }
+        Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(18.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(title, color = Muted, style = MaterialTheme.typography.labelSmall)
             Text(value, color = TextPrimary, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -1688,8 +1731,8 @@ private fun RoundAction(
 @Composable
 private fun AmbientGlow() {
     Canvas(modifier = Modifier.fillMaxSize()) {
-        drawCircle(brush = Brush.radialGradient(listOf(Moss.copy(alpha = 0.10f), Color.Transparent)), radius = 440f, center = Offset(size.width * 0.72f, size.height * 0.12f))
-        drawCircle(brush = Brush.radialGradient(listOf(Gold.copy(alpha = 0.08f), Color.Transparent)), radius = 360f, center = Offset(size.width * 0.14f, size.height * 0.82f))
+        drawCircle(brush = Brush.radialGradient(listOf(Moss.copy(alpha = 0.05f), Color.Transparent)), radius = 420f, center = Offset(size.width * 0.72f, size.height * 0.12f))
+        drawCircle(brush = Brush.radialGradient(listOf(Gold.copy(alpha = 0.035f), Color.Transparent)), radius = 340f, center = Offset(size.width * 0.14f, size.height * 0.82f))
     }
 }
 
@@ -1756,42 +1799,77 @@ private fun PlaybackVisualizer(
     accent: Color,
     dense: Boolean,
 ) {
+    val bandCount = when {
+        state.bands.isNotEmpty() -> state.bands.size
+        dense -> 32
+        else -> 24
+    }
+    // Single lerp buffer — no N× spring recompositions
+    val displayBands = remember(bandCount) { FloatArray(bandCount) { 0.12f } }
     val transition = rememberInfiniteTransition(label = "visualizer-idle")
     val idlePhase by transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1800),
-        ),
+        animationSpec = infiniteRepeatable(animation = tween(2200)),
         label = "visualizer-idle-phase",
     )
-    val animatedBands = state.bands.mapIndexed { index, band ->
-        animateFloatAsState(
-            targetValue = if (state.active) band else idleValue(index, idlePhase, dense),
-            animationSpec = spring(stiffness = Spring.StiffnessLow, dampingRatio = Spring.DampingRatioMediumBouncy),
-            label = "band-$index",
-        ).value
+    var frameTick by remember { mutableStateOf(0L) }
+
+    // Smooth chase toward spectrum / idle targets — single loop, no N springs
+    LaunchedEffect(bandCount) {
+        while (true) {
+            withFrameNanos {
+                for (i in 0 until bandCount) {
+                    val target = if (state.active && i < state.bands.size) {
+                        state.bands[i].coerceIn(0f, 1f)
+                    } else {
+                        idleValue(i, idlePhase, dense)
+                    }
+                    val current = displayBands[i]
+                    displayBands[i] = current + (target - current) * 0.2f
+                }
+                frameTick++
+            }
+        }
     }
 
+    // Read tick so Canvas invalidates each frame
+    @Suppress("UNUSED_VARIABLE")
+    val redraw = frameTick
     Canvas(modifier = modifier) {
-        val bands = if (animatedBands.isEmpty()) List(if (dense) 32 else 24) { 0f } else animatedBands
-        val gap = if (dense) 5f else 7f
-        val barWidth = ((size.width - gap * (bands.size - 1)) / bands.size).coerceAtLeast(3f)
-        bands.forEachIndexed { index, value ->
-            val normalized = value.coerceIn(0f, 1f)
-            val barHeight = (size.height * (0.18f + normalized * 0.82f)).coerceAtLeast(size.height * 0.12f)
+        val gap = if (dense) 3f else 4f
+        val barWidth = ((size.width - gap * (bandCount - 1)) / bandCount).coerceAtLeast(2.5f)
+        val segmentH = 3.5f
+        val segmentGap = 1.6f
+        for (index in 0 until bandCount) {
+            val normalized = displayBands[index].coerceIn(0f, 1f)
+            val barHeight = (size.height * (0.12f + normalized * 0.88f)).coerceAtLeast(size.height * 0.08f)
             val left = index * (barWidth + gap)
-            drawRoundRect(
-                brush = Brush.verticalGradient(
-                    listOf(
-                        accent.copy(alpha = 0.18f + normalized * 0.25f),
-                        accent.copy(alpha = 0.68f + normalized * 0.2f),
-                    ),
-                ),
-                topLeft = Offset(left, size.height - barHeight),
-                size = Size(barWidth, barHeight),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth / 2, barWidth / 2),
-            )
+            val bottom = size.height
+            // Segmented matrix bars (ASCII / Watch Dogs terminal feel)
+            var y = bottom
+            var seg = 0
+            while (bottom - y < barHeight) {
+                val top = (y - segmentH).coerceAtLeast(bottom - barHeight)
+                val t = ((bottom - top) / size.height).coerceIn(0f, 1f)
+                val col = lerp(accent.copy(alpha = 0.25f), Gold.copy(alpha = 0.55f + normalized * 0.35f), t * 0.65f + normalized * 0.35f)
+                drawRect(
+                    color = col,
+                    topLeft = Offset(left, top),
+                    size = Size(barWidth, (y - top).coerceAtLeast(1f)),
+                )
+                y = top - segmentGap
+                seg++
+                if (seg > 64) break
+            }
+            // Cap glyph row — subtle terminal ticks
+            if (normalized > 0.08f) {
+                drawRect(
+                    color = Moss.copy(alpha = 0.55f + normalized * 0.35f),
+                    topLeft = Offset(left, bottom - barHeight),
+                    size = Size(barWidth, 1.5f),
+                )
+            }
         }
     }
 }
