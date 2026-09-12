@@ -1341,25 +1341,37 @@ private fun PlaylistColumn(
 
 @Composable
 private fun PlaylistCard(playlist: PlaylistRecord, onClick: () -> Unit) {
-    Surface(modifier = Modifier.width(220.dp).pressClickable(onClick = onClick), shape = RoundedCornerShape(Wd2Radius.md), color = Panel) {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    // Used to be a full-bleed gradient slab with 32sp black serif initials — the loudest and
+    // crudest thing on the page. Now it is a quiet tile with one muted note glyph, the way a
+    // missing cover is handled everywhere else.
+    Surface(
+        modifier = Modifier.width(200.dp).pressClickable(onClick = onClick),
+        shape = RoundedCornerShape(Wd2Radius.lg),
+        color = Panel,
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(180.dp)
+                    .height(156.dp)
                     .clip(RoundedCornerShape(Wd2Radius.md))
-                    .background(Brush.linearGradient(listOf(parseTone(playlist.tone), Color(0xFF232625)))),
+                    .background(PanelRaised),
+                contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    playlist.artworkHint,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(16.dp),
-                    color = Color.Black,
-                    fontFamily = FontFamily.Serif,
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.Black,
+                YdxIcon(
+                    YdxGlyph.Library,
+                    tint = parseTone(playlist.tone).copy(alpha = 0.5f),
+                    boxSize = 40.dp,
+                    stroke = 1.4.dp,
                 )
             }
-            Text(playlist.name, color = TextPrimary, style = MaterialTheme.typography.titleMedium)
+            Text(
+                playlist.name,
+                color = TextPrimary,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
