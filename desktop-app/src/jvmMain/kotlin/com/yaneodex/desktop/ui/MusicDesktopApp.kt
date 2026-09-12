@@ -3,6 +3,9 @@ package com.yaneodex.desktop.ui
 import com.yaneodex.desktop.ui.theme.Wd2
 import com.yaneodex.desktop.ui.theme.Wd2Fonts
 import com.yaneodex.desktop.ui.theme.Wd2Radius
+import com.yaneodex.desktop.ui.theme.YaNeoDexMark
+import com.yaneodex.desktop.ui.theme.YdxGlyph
+import com.yaneodex.desktop.ui.theme.YdxIcon
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
@@ -53,35 +56,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.automirrored.rounded.ArrowForward
-import androidx.compose.material.icons.automirrored.rounded.NavigateBefore
-import androidx.compose.material.icons.automirrored.rounded.NavigateNext
-import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
-import androidx.compose.material.icons.automirrored.rounded.QueueMusic
-import androidx.compose.material.icons.automirrored.rounded.VolumeDown
-import androidx.compose.material.icons.automirrored.rounded.VolumeOff
-import androidx.compose.material.icons.automirrored.rounded.VolumeUp
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.FolderOpen
-import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.Language
-import androidx.compose.material.icons.rounded.LibraryMusic
-import androidx.compose.material.icons.rounded.Menu
-import androidx.compose.material.icons.rounded.MenuOpen
-import androidx.compose.material.icons.rounded.RadioButtonUnchecked
-import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Shuffle
-import androidx.compose.material.icons.rounded.Sync
-import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Slider
@@ -186,7 +160,7 @@ private data class TrackActionSpec(
 
 private data class TrackBulkActionSpec(
     val label: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val icon: YdxGlyph,
     val accent: Color,
     val onClick: (List<String>) -> Unit,
 )
@@ -395,16 +369,20 @@ private fun Sidebar(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(Modifier.size(8.dp).clip(CircleShape).background(Wd2.Accent))
+                YaNeoDexMark(boxSize = 22.dp)
                 if (!collapsed) {
+                    // Wordmark, not a headline: tight caps with wide tracking reads as a logo.
                     Text(
                         "YANEODEX",
                         color = TextPrimary,
-                        style = MaterialTheme.typography.titleLarge,
+                        fontFamily = Wd2Fonts.Content,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        letterSpacing = 2.4.sp,
                         modifier = Modifier.weight(1f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -413,12 +391,13 @@ private fun Sidebar(
                     Spacer(Modifier.weight(1f))
                 }
                 RoundAction(
-                    icon = if (collapsed) Icons.Rounded.Menu else Icons.Rounded.MenuOpen,
+                    icon = YdxGlyph.Panel,
                     active = false,
                     onClick = onToggleCollapsed,
-                    size = 28.dp,
-                    iconSize = 16.dp,
+                    size = 30.dp,
+                    iconSize = 18.dp,
                     subdued = true,
+                    mirrored = collapsed,
                 )
             }
 
@@ -427,7 +406,7 @@ private fun Sidebar(
                     "OFFLINE NODE · BUILD 0.1.2",
                     color = Muted,
                     style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(start = 16.dp, bottom = 8.dp),
+                    modifier = Modifier.padding(start = 34.dp, bottom = 8.dp),
                     maxLines = 1,
                 )
             }
@@ -448,12 +427,12 @@ private fun SidebarNavigation(
 ) {
     // Labels read as language now; the terminal index stays as a quiet mono detail.
     val items = listOf(
-        NavItem(DesktopSection.HOME, strings.navHome, "01", Icons.Rounded.Home),
-        NavItem(DesktopSection.SEARCH, strings.navSearch, "02", Icons.Rounded.Search),
-        NavItem(DesktopSection.PLAYLISTS, strings.navPlaylists, "03", Icons.AutoMirrored.Rounded.PlaylistPlay),
-        NavItem(DesktopSection.LIBRARY, strings.navLibrary, "04", Icons.Rounded.LibraryMusic),
-        NavItem(DesktopSection.IMPORT, strings.navImport, "05", Icons.Rounded.AutoAwesome),
-        NavItem(DesktopSection.SETTINGS, strings.navSettings, "06", Icons.Rounded.Tune),
+        NavItem(DesktopSection.HOME, strings.navHome, "01", YdxGlyph.Home),
+        NavItem(DesktopSection.SEARCH, strings.navSearch, "02", YdxGlyph.Search),
+        NavItem(DesktopSection.PLAYLISTS, strings.navPlaylists, "03", YdxGlyph.Playlist),
+        NavItem(DesktopSection.LIBRARY, strings.navLibrary, "04", YdxGlyph.Library),
+        NavItem(DesktopSection.IMPORT, strings.navImport, "05", YdxGlyph.Import),
+        NavItem(DesktopSection.SETTINGS, strings.navSettings, "06", YdxGlyph.Settings),
     )
     val selectedIndex = items.indexOfFirst { it.section == selectedSection }.coerceAtLeast(0)
     val itemHeight = 40.dp
@@ -495,7 +474,7 @@ private data class NavItem(
     val section: DesktopSection,
     val label: String,
     val index: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val icon: YdxGlyph,
 )
 
 @Composable
@@ -520,21 +499,21 @@ private fun TopBar(
         // Browser-style history controls, the way Spotify's desktop shell does it.
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             RoundAction(
-                icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                icon = YdxGlyph.Back,
                 active = false,
                 onClick = onNavigateBack,
                 enabled = canGoBack,
                 size = 34.dp,
-                iconSize = 18.dp,
+                iconSize = 20.dp,
                 subdued = true,
             )
             RoundAction(
-                icon = Icons.AutoMirrored.Rounded.ArrowForward,
+                icon = YdxGlyph.Forward,
                 active = false,
                 onClick = onNavigateForward,
                 enabled = canGoForward,
                 size = 34.dp,
-                iconSize = 18.dp,
+                iconSize = 20.dp,
                 subdued = true,
             )
         }
@@ -557,7 +536,7 @@ private fun TopBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Icon(Icons.Rounded.Search, contentDescription = null, tint = Muted, modifier = Modifier.size(18.dp))
+            YdxIcon(YdxGlyph.Search, tint = Muted, boxSize = 20.dp)
             BasicTextField(
                 value = query,
                 onValueChange = onSearchChange,
@@ -576,21 +555,21 @@ private fun TopBar(
             )
             if (query.isNotBlank()) {
                 RoundAction(
-                    icon = Icons.Rounded.Search,
+                    icon = YdxGlyph.Search,
                     active = true,
                     onClick = { onRunParserSearch(query) },
                     size = 28.dp,
-                    iconSize = 15.dp,
+                    iconSize = 17.dp,
                 )
             }
         }
 
         RoundAction(
-            icon = Icons.AutoMirrored.Rounded.QueueMusic,
+            icon = YdxGlyph.Queue,
             active = queuePanelOpen,
             onClick = onToggleQueuePanel,
             size = 34.dp,
-            iconSize = 18.dp,
+            iconSize = 20.dp,
         )
     }
 }
@@ -849,7 +828,7 @@ private fun Hero(state: DesktopUiState, strings: DesktopStrings, onPlayPlaylist:
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    AccentAction(strings.playLaneAction, Icons.Rounded.PlayArrow, Moss, onPlayPlaylist)
+                    AccentAction(strings.playLaneAction, YdxGlyph.Play, Moss, onPlayPlaylist)
                 }
             }
             Box(
@@ -902,9 +881,9 @@ private fun OnboardingSection(
                 Text(strings.onboardingSubtitle, color = TextDim, style = MaterialTheme.typography.bodyLarge)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                AccentAction(strings.onboardingPrimaryAction, Icons.Rounded.FolderOpen, Moss, onImportLibraryFolders)
-                AccentAction(strings.onboardingSecondaryAction, Icons.Rounded.Refresh, Gold, onRefreshLibrary)
-                AccentAction(strings.onboardingParserAction, Icons.Rounded.Search, Sky, onOpenSearch)
+                AccentAction(strings.onboardingPrimaryAction, YdxGlyph.Folder, Moss, onImportLibraryFolders)
+                AccentAction(strings.onboardingSecondaryAction, YdxGlyph.Refresh, Gold, onRefreshLibrary)
+                AccentAction(strings.onboardingParserAction, YdxGlyph.Search, Sky, onOpenSearch)
             }
         }
         RecordHalo(modifier = Modifier.align(Alignment.CenterEnd))
@@ -935,7 +914,7 @@ private fun PlaylistSection(
         SectionTitle(strings.sectionPlaylists)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             Spacer(Modifier.weight(1f))
-            AccentAction(strings.createAction, Icons.AutoMirrored.Rounded.PlaylistPlay, Moss) {
+            AccentAction(strings.createAction, YdxGlyph.Playlist, Moss) {
                 dialogMode = PlaylistEditorMode.Create
             }
         }
@@ -956,7 +935,7 @@ private fun PlaylistSection(
                 TrackActionSpec(strings.removeAction, onRemoveTrackFromPlaylist),
             ),
             bulkActions = listOf(
-                TrackBulkActionSpec(strings.removeAction, Icons.Rounded.Delete, Gold, onRemoveTracksFromPlaylist),
+                TrackBulkActionSpec(strings.removeAction, YdxGlyph.Delete, Gold, onRemoveTracksFromPlaylist),
             ),
         )
     }
@@ -995,8 +974,8 @@ private fun LibrarySection(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            AccentAction(strings.addFoldersAction, Icons.Rounded.FolderOpen, Moss, onImportLibraryFolders)
-            AccentAction(strings.refreshAction, Icons.Rounded.Refresh, Gold, onRefreshLibrary)
+            AccentAction(strings.addFoldersAction, YdxGlyph.Folder, Moss, onImportLibraryFolders)
+            AccentAction(strings.refreshAction, YdxGlyph.Refresh, Gold, onRefreshLibrary)
         }
         StatusCard(strings.sectionLibrary, buildLibraryStatusText(state, strings))
         TrackList(
@@ -1009,8 +988,8 @@ private fun LibrarySection(
                 TrackActionSpec(strings.deleteAction) { trackId -> onDeleteTracksFromLibrary(listOf(trackId)) },
             ),
             bulkActions = listOf(
-                TrackBulkActionSpec(strings.addAction, Icons.AutoMirrored.Rounded.PlaylistPlay, Moss, onAddTracksToPlaylist),
-                TrackBulkActionSpec(strings.deleteAction, Icons.Rounded.Delete, Coral, onDeleteTracksFromLibrary),
+                TrackBulkActionSpec(strings.addAction, YdxGlyph.Playlist, Moss, onAddTracksToPlaylist),
+                TrackBulkActionSpec(strings.deleteAction, YdxGlyph.Delete, Coral, onDeleteTracksFromLibrary),
             ),
         )
     }
@@ -1030,7 +1009,7 @@ private fun ImportSection(
             Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 LabeledField(strings.ocrServerLabel, state.ocrSettings.serverUrl, strings.ocrServerPlaceholder, onOcrServerUrlChange)
                 LabeledField(strings.bearerTokenLabel, state.ocrSettings.authToken, strings.bearerTokenPlaceholder, onOcrTokenChange)
-                AccentAction(strings.chooseScreenshotsAction, Icons.Rounded.FolderOpen, Moss, onPickScreenshots)
+                AccentAction(strings.chooseScreenshotsAction, YdxGlyph.Folder, Moss, onPickScreenshots)
             }
         }
         StatusCard(strings.sectionOcr, state.ocrStatus)
@@ -1077,11 +1056,11 @@ private fun RightRail(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                Icon(
-                    Icons.Rounded.Shuffle,
-                    contentDescription = strings.shuffleLabel,
+                YdxIcon(
+                    YdxGlyph.Shuffle,
                     tint = if (state.shuffleEnabled) Wd2.Accent else Muted,
-                    modifier = Modifier.size(18.dp),
+                    boxSize = 20.dp,
+                    contentDescription = strings.shuffleLabel,
                 )
             }
             Text(
@@ -1193,12 +1172,12 @@ private fun BottomPlayer(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        PixelAction(Icons.Rounded.Shuffle, state.shuffleEnabled, onToggleShuffle)
+                        PixelAction(YdxGlyph.Shuffle, state.shuffleEnabled, onToggleShuffle)
                         VolumeControl(volume = state.playbackVolume, accent = Wd2.Accent, compact = true, onChange = onSetPlaybackVolume)
                         Spacer(Modifier.weight(1f))
-                        PixelAction(Icons.AutoMirrored.Rounded.NavigateBefore, false, onPlayPrevious)
-                        PixelAction(if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, true, onTogglePlayPause, primary = true)
-                        PixelAction(Icons.AutoMirrored.Rounded.NavigateNext, false, onPlayNext)
+                        PixelAction(YdxGlyph.Prev, false, onPlayPrevious)
+                        PixelAction(if (state.isPlaying) YdxGlyph.Pause else YdxGlyph.Play, true, onTogglePlayPause, primary = true)
+                        PixelAction(YdxGlyph.Next, false, onPlayNext)
                     }
                 }
             } else {
@@ -1241,10 +1220,10 @@ private fun BottomPlayer(
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         VolumeControl(volume = state.playbackVolume, accent = Wd2.Accent, compact = false, onChange = onSetPlaybackVolume)
-                        PixelAction(Icons.Rounded.Shuffle, state.shuffleEnabled, onToggleShuffle)
-                        PixelAction(Icons.AutoMirrored.Rounded.NavigateBefore, false, onPlayPrevious)
-                        PixelAction(if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, true, onTogglePlayPause, primary = true)
-                        PixelAction(Icons.AutoMirrored.Rounded.NavigateNext, false, onPlayNext)
+                        PixelAction(YdxGlyph.Shuffle, state.shuffleEnabled, onToggleShuffle)
+                        PixelAction(YdxGlyph.Prev, false, onPlayPrevious)
+                        PixelAction(if (state.isPlaying) YdxGlyph.Pause else YdxGlyph.Play, true, onTogglePlayPause, primary = true)
+                        PixelAction(YdxGlyph.Next, false, onPlayNext)
                     }
                 }
             }
@@ -1265,17 +1244,18 @@ private fun LanguageSwitcher(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (collapsed) {
-                Icon(
-                    Icons.Rounded.Language,
-                    contentDescription = strings.languageLabel,
+                YdxIcon(
+                    YdxGlyph.Globe,
                     tint = TextDim,
-                    modifier = Modifier.size(16.dp).align(Alignment.CenterHorizontally),
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                    boxSize = 20.dp,
+                    contentDescription = strings.languageLabel,
                 )
                 LanguageButton("R", language == AppLanguage.RU) { onLanguageChange(AppLanguage.RU) }
                 LanguageButton("E", language == AppLanguage.EN) { onLanguageChange(AppLanguage.EN) }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Language, contentDescription = null, tint = TextDim, modifier = Modifier.size(16.dp))
+                    YdxIcon(YdxGlyph.Globe, tint = TextDim, boxSize = 19.dp)
                     Text(strings.languageLabel, color = TextDim, style = MaterialTheme.typography.bodySmall)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1351,7 +1331,7 @@ private fun PlaylistColumn(
                             .pressClickable { onEditPlaylist(playlist) }
                             .padding(10.dp),
                     ) {
-                        Icon(Icons.Rounded.Edit, contentDescription = strings.editAction, tint = TextPrimary, modifier = Modifier.size(18.dp))
+                        YdxIcon(YdxGlyph.Edit, tint = TextPrimary, boxSize = 19.dp, contentDescription = strings.editAction)
                     }
                 }
             }
@@ -1437,7 +1417,7 @@ private fun PlaylistEditorDialog(
                     SecondaryAction(strings.cancelAction, onDismiss)
                     AccentAction(
                         label = if (isEditing) strings.renameAction else strings.createAction,
-                        icon = if (isEditing) Icons.Rounded.Edit else Icons.AutoMirrored.Rounded.PlaylistPlay,
+                        icon = if (isEditing) YdxGlyph.Edit else YdxGlyph.Playlist,
                         color = if (isEditing) Gold else Moss,
                     ) {
                         onSubmit(name, artworkHint)
@@ -1620,27 +1600,26 @@ private fun BulkActionChip(action: TrackBulkActionSpec, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(action.icon, contentDescription = action.label, tint = action.accent, modifier = Modifier.size(16.dp))
+        YdxIcon(action.icon, tint = action.accent, boxSize = 18.dp, contentDescription = action.label)
         Text(action.label, color = TextPrimary, style = MaterialTheme.typography.labelMedium)
     }
 }
 
 @Composable
 private fun SelectionToggleButton(selected: Boolean, onClick: () -> Unit) {
+    // One ring, not a ring inside a ring — the old version drew a bordered circle around
+    // a circular icon, which is where a lot of the "cramped" feel came from.
     Box(
         modifier = Modifier
             .size(26.dp)
             .clip(CircleShape)
-            .background(if (selected) Gold.copy(alpha = 0.18f) else PanelRaised)
-            .border(1.dp, if (selected) Gold.copy(alpha = 0.42f) else Outline, CircleShape)
             .pressClickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            if (selected) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
-            contentDescription = null,
+        YdxIcon(
+            if (selected) YdxGlyph.CheckCircle else YdxGlyph.Circle,
             tint = if (selected) Gold else Muted,
-            modifier = Modifier.size(16.dp),
+            boxSize = 20.dp,
         )
     }
 }
@@ -1853,7 +1832,7 @@ private fun SectionTitle(title: String) {
 private fun NavPill(
     label: String,
     index: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: YdxGlyph,
     collapsed: Boolean,
     selected: Boolean,
     onClick: () -> Unit,
@@ -1874,7 +1853,7 @@ private fun NavPill(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(19.dp))
+        YdxIcon(icon, tint = tint, boxSize = 22.dp, contentDescription = label)
         if (!collapsed) {
             Text(
                 label,
@@ -1895,7 +1874,7 @@ private fun NavPill(
 }
 
 @Composable
-private fun AccentAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, color: Color, onClick: () -> Unit) {
+private fun AccentAction(label: String, icon: YdxGlyph, color: Color, onClick: () -> Unit) {
     val interactionSource = remember { MutableInteractionSource() }
     val hovered by interactionSource.collectIsHoveredAsState()
     val isPrimary = color == Gold || color == Wd2.Accent
@@ -1916,11 +1895,11 @@ private fun AccentAction(label: String, icon: androidx.compose.ui.graphics.vecto
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
+        YdxIcon(
             icon,
-            contentDescription = label,
             tint = if (isPrimary) Wd2.AccentText else TextDim,
-            modifier = Modifier.size(17.dp),
+            boxSize = 19.dp,
+            contentDescription = label,
         )
         Text(
             label,
@@ -2070,44 +2049,31 @@ private fun AccentChip(label: String, background: Color, onClick: (() -> Unit)? 
     }
 }
 
-@Composable
-private fun MiniPanel(title: String, value: String, icon: androidx.compose.ui.graphics.vector.ImageVector, accent: Color, onClick: (() -> Unit)? = null) {
-    // Kept for other call sites; lighter chrome (fill only)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(Wd2Radius.md))
-            .background(PanelRaised)
-            .pressClickable(enabled = onClick != null) { onClick?.invoke() }
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(18.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = Muted, style = MaterialTheme.typography.labelSmall)
-            Text(value, color = TextPrimary, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        }
-    }
-}
-
+/**
+ * Track artwork placeholder.
+ *
+ * This used to be a coloured box inside a coloured border with heavy black initials —
+ * three competing edges on a 40dp square, which is why a list of tracks read as a grid of
+ * little logos. Now it is one soft tile with quiet mono initials, so the column reads as
+ * text and the artwork area stops shouting.
+ */
 @Composable
 private fun ArtworkBadge(label: String, color: Color, compact: Boolean = false) {
     val size = if (compact) 40.dp else 48.dp
     Box(
         modifier = Modifier
             .size(size)
-            .background(Wd2.Bg)
-            .border(1.dp, color)
-            .padding(2.dp)
-            .background(color.copy(alpha = 0.15f)),
+            .clip(RoundedCornerShape(Wd2Radius.md))
+            .background(PanelRaised),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             label,
-            color = color,
-            fontWeight = FontWeight.Black,
-            style = if (compact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
+            color = color.copy(alpha = 0.7f),
+            fontFamily = Wd2Fonts.Meta,
+            fontWeight = FontWeight.Medium,
+            fontSize = if (compact) 11.sp else 12.sp,
+            letterSpacing = 1.sp,
             maxLines = 1,
         )
     }
@@ -2125,7 +2091,7 @@ private fun RecordHalo(modifier: Modifier = Modifier) {
 
 @Composable
 private fun PixelAction(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: YdxGlyph,
     active: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -2136,16 +2102,18 @@ private fun PixelAction(
 
 @Composable
 private fun RoundAction(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: YdxGlyph,
     active: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     primary: Boolean = false,
     enabled: Boolean = true,
     size: androidx.compose.ui.unit.Dp = if (primary) 48.dp else 40.dp,
-    iconSize: androidx.compose.ui.unit.Dp = if (primary) 22.dp else 19.dp,
+    iconSize: androidx.compose.ui.unit.Dp = if (primary) 26.dp else 22.dp,
     /** Quiet chrome buttons (history, collapse) that should not compete with the accent. */
     subdued: Boolean = false,
+    /** Flips the glyph horizontally — used for the sidebar toggle in its collapsed state. */
+    mirrored: Boolean = false,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
@@ -2197,7 +2165,12 @@ private fun RoundAction(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = contentColor, modifier = Modifier.size(iconSize))
+        YdxIcon(
+            icon,
+            tint = contentColor,
+            modifier = if (mirrored) Modifier.graphicsLayer { scaleX = -1f } else Modifier,
+            boxSize = iconSize,
+        )
     }
 }
 
@@ -2594,11 +2567,10 @@ private fun derivePlaylistArtworkHint(name: String, artworkHint: String): String
     return resolved.take(2).padEnd(2, ' ').trim().ifBlank { "PL" }
 }
 
-private fun volumeIconFor(volume: Float) = when {
-    volume <= 0.001f -> Icons.AutoMirrored.Rounded.VolumeOff
-    volume < 0.5f -> Icons.AutoMirrored.Rounded.VolumeDown
-    else -> Icons.AutoMirrored.Rounded.VolumeUp
-}
+// One speaker glyph, muted or not — the old set had three separate volume icons whose
+// weights did not match, and the difference between them was invisible at 18dp anyway.
+private fun volumeIconFor(volume: Float): YdxGlyph =
+    if (volume <= 0.001f) YdxGlyph.VolumeOff else YdxGlyph.Volume
 
 internal fun timelineKeyboardStepMs(durationMs: Long): Long =
     (durationMs / 24L).coerceIn(3_000L, 12_000L)

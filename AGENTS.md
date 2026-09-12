@@ -132,3 +132,15 @@ These are load-bearing; breaking them is what caused the desync bugs fixed in th
   active state and primary actions. Radii come from `Wd2Radius`.
 - Avoid full-screen animated overlays. The CRT layer is intentionally static; an always-running
   full-window repaint is a measurable cost and was the main source of the harsh look.
+- Icons come from `ui/theme/YaNeoDexIcons.kt` (`YdxGlyph` + `YdxIcon`), not from Material. The
+  whole set is drawn on a 24x24 grid with one stroke weight, round caps and round joins, so
+  nothing mixes filled and outlined weights. Do not add a `material-icons-extended` glyph back in:
+  at 18-22dp the stock set turns to mush and its fill weights disagree with each other.
+- Sizes are deliberate: 22dp in sidebar rows and transport buttons, 26dp for the primary play
+  button, 20dp for top-bar chrome, 18-19dp inside chips. `stroke` defaults to 7.5% of the box, so
+  optical weight stays constant if you resize a glyph.
+- The logo is `YaNeoDexMark` (three level bars, tallest in accent) plus a wide-tracked wordmark.
+  The window/taskbar icon in `app/Main.kt` draws the same mark with Java2D — if you change one,
+  change the other.
+- The main window sets its own size and minimum size in `app/Main.kt`. Without it Compose opens at
+  800x600 and the sidebar, main column and queue rail crush into each other.
