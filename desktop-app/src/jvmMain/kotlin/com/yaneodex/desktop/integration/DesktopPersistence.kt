@@ -2,7 +2,6 @@ package com.yaneodex.desktop.integration
 
 import com.yaneodex.core.state.DesktopSection
 import com.yaneodex.core.state.DesktopUiState
-import com.yaneodex.core.state.OcrSettings
 import com.yaneodex.core.state.AppLanguage
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -33,7 +32,6 @@ class DesktopPersistence(
             playbackVolume = state.playbackVolume,
             searchQuery = state.searchQuery,
             highlightedTag = state.highlightedTag,
-            ocrSettings = state.ocrSettings,
         )
         runCatching {
             stateFile.parentFile?.mkdirs()
@@ -57,7 +55,6 @@ class DesktopPersistence(
             playbackVolume = persisted.playbackVolume.coerceIn(0f, 1f),
             searchQuery = persisted.searchQuery,
             highlightedTag = persisted.highlightedTag.takeIf { it.isNotBlank() } ?: base.highlightedTag,
-            ocrSettings = persisted.ocrSettings,
             spotlight = base.snapshot.playlists.firstOrNull { it.id == playlistId }?.let {
                 base.spotlight.copy(title = it.name, subtitle = it.description, accent = it.tone)
             } ?: base.spotlight,
@@ -75,5 +72,4 @@ data class PersistedDesktopState(
     val playbackVolume: Float = 0.72f,
     val searchQuery: String = "",
     val highlightedTag: String = "",
-    val ocrSettings: OcrSettings = OcrSettings(),
 )

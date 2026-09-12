@@ -2,26 +2,23 @@
 
 Standalone Windows-first desktop repository for YaNeoDex.
 
-Current target: a Minimal Marketable Product for local offline playback with parser and OCR support.
+Current target: a Minimal Marketable Product for local offline playback with parser support.
 
 ## What is implemented
 
 - `shared-core` module:
-  - core models for library/source/import/playback
+  - core models for library/source/playback
   - queue+shuffle logic
-  - OCR matching logic
   - stable contracts for:
     - `LibraryRepository`
     - `PlaybackBackend`
     - `MusicSourceCatalog` / `MusicSource`
-    - `OcrImportClient`
 - `desktop-app` module:
   - Compose Desktop UI with Spotify-inspired desktop composition
   - real local library scan from selected disk folders
   - metadata extraction (title/artist/duration) from audio files
   - real Windows playback backend (JavaFX Media)
   - remote parser search/resolve (Ligaudio)
-  - OCR playlist import (`/v1/ocr-image`, `/v1/playlist-import/jobs/...`)
   - playlist create/rename/add/remove flows
   - RU default UI with RU/EN language switch
   - state persistence to `%USERPROFILE%\.yaneodex-desktop`
@@ -40,7 +37,7 @@ Current target: a Minimal Marketable Product for local offline playback with par
 - `shared-core/` shared domain/contracts/use-cases
 - `desktop-app/` Windows UI + adapters + DI wiring
 - `scripts/` build/test/run/package/smoke scripts
-- `.env.example` config template for OCR/library defaults
+- `.env.example` config template for library/download defaults
 
 ## Quickstart (Windows)
 
@@ -77,22 +74,6 @@ Canonical release artifacts:
 
 For end-user delivery, treat the MSI or EXE installer as the primary artifact. The unpacked `main/app/` bundle is useful for local diagnostics, but the supported smoke path is the installed `Program Files` app.
 
-## OCR contract
-
-Desktop client expects OCR candidates in this shape:
-
-```json
-{
-  "candidateId": "string",
-  "screenshotIndex": 0,
-  "rawText": "Title | Artist",
-  "artistGuess": "Artist",
-  "titleGuess": "Title",
-  "confidence": 0.0,
-  "bbox": [0, 0, 100, 50]
-}
-```
-
 ## Troubleshooting
 
 - `Build fails on JDK 25+`:
@@ -107,7 +88,5 @@ Desktop client expects OCR candidates in this shape:
   - This desktop repo does not need Android SDK; run commands from this repository only.
 - `Playback failed`:
   - check file path accessibility and codec support in Windows Media stack.
-- `OCR HTTP 401/429`:
-  - verify bearer token and backend rate limits.
 - `No tracks found`:
   - add folders via `Library -> Add folders` and refresh.

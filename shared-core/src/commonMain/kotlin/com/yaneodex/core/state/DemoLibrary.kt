@@ -1,6 +1,5 @@
 package com.yaneodex.core.state
 
-import com.yaneodex.core.importer.MatchedTrackCandidate
 import com.yaneodex.core.model.LibrarySnapshot
 import com.yaneodex.core.model.PlaylistRecord
 import com.yaneodex.core.playback.buildPlaybackQueue
@@ -37,10 +36,6 @@ object DemoLibrary {
             parserResults = emptyList(),
             parserStatus = "",
             parserLoading = false,
-            ocrSettings = OcrSettings(),
-            ocrStatus = "",
-            ocrLoading = false,
-            importMatches = emptyList<MatchedTrackCandidate>(),
             spotlight = SpotlightCard(
                 eyebrow = "",
                 title = "Музыка",

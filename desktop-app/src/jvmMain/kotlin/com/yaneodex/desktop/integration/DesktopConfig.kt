@@ -5,8 +5,6 @@ import java.util.Properties
 
 data class DesktopConfig(
     val libraryPath: String?,
-    val ocrBaseUrl: String?,
-    val ocrToken: String?,
     val downloadDir: String?,
 ) {
     companion object {
@@ -17,8 +15,6 @@ data class DesktopConfig(
 
             return DesktopConfig(
                 libraryPath = pick("YANEODEX_LIBRARY_PATH"),
-                ocrBaseUrl = pick("YANEODEX_OCR_BASE_URL"),
-                ocrToken = pick("YANEODEX_OCR_TOKEN"),
                 downloadDir = pick("YANEODEX_DOWNLOAD_DIR"),
             )
         }

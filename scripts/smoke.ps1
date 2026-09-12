@@ -37,7 +37,6 @@ try {
     Write-Host "- Play a local track, test previous/next/shuffle"
     Write-Host "- Create a playlist, add and remove tracks"
     Write-Host "- Search parser, preview, download, and add a track"
-    Write-Host "- Configure OCR URL/token, import screenshots, verify matches"
 } finally {
     Pop-Location
 }

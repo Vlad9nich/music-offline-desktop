@@ -2,12 +2,8 @@ package com.yaneodex.desktop.app
 
 import com.yaneodex.core.contracts.LibraryRepository
 import com.yaneodex.core.contracts.MusicSourceCatalog
-import com.yaneodex.core.contracts.OcrImportClient
-import com.yaneodex.core.contracts.OcrJobResult
 import com.yaneodex.core.contracts.PlaybackBackend
 import com.yaneodex.core.contracts.PlaybackSnapshot
-import com.yaneodex.core.importer.MatchedTrackCandidate
-import com.yaneodex.core.importer.ScreenshotImportMatcher
 import com.yaneodex.core.model.LibrarySnapshot
 import com.yaneodex.core.model.RemoteTrackCandidate
 import com.yaneodex.core.model.TrackRecord
@@ -18,7 +14,6 @@ import com.yaneodex.core.state.AppLanguage
 import com.yaneodex.core.state.DemoLibrary
 import com.yaneodex.core.state.DesktopSection
 import com.yaneodex.core.state.DesktopUiState
-import com.yaneodex.core.state.OcrSettings
 import com.yaneodex.core.state.PlaybackVisualizerState
 import com.yaneodex.core.state.SpotlightCard
 import com.yaneodex.desktop.integration.DesktopConfig
@@ -28,7 +23,6 @@ import com.yaneodex.desktop.integration.DesktopLibraryRepository
 import com.yaneodex.desktop.integration.DesktopMusicSourceCatalog
 import com.yaneodex.desktop.integration.DesktopPersistence
 import com.yaneodex.desktop.integration.JavaFxPlaybackBackend
-import com.yaneodex.desktop.integration.WindowsOcrClient
 import com.yaneodex.desktop.ui.desktopStrings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,7 +45,6 @@ class DesktopController(
         configuredDefaultRoots = listOfNotNull(config.libraryPath?.takeIf { it.isNotBlank() }),
     ),
     private val sourceCatalog: MusicSourceCatalog = DesktopMusicSourceCatalog(),
-    private val ocrClient: OcrImportClient = WindowsOcrClient(),
     private val persistence: DesktopPersistence = DesktopPersistence(),
     private val playbackBackend: PlaybackBackend = JavaFxPlaybackBackend(),
     private val downloadManager: DownloadManager = DesktopDownloadManager(),
@@ -511,17 +504,6 @@ class DesktopController(
         previewParserResult(track)
     }
 
-    fun updateOcrSettings(serverUrl: String? = null, authToken: String? = null) {
-        mutate {
-            it.copy(
-                ocrSettings = OcrSettings(
-                    serverUrl = serverUrl ?: it.ocrSettings.serverUrl,
-                    authToken = authToken ?: it.ocrSettings.authToken,
-                ),
-            )
-        }
-    }
-
     fun importLibraryFolders(paths: List<String>) {
         if (paths.isEmpty()) return
         scope.launch {
@@ -563,72 +545,6 @@ class DesktopController(
         }
     }
 
-    fun analyzeScreenshots(files: List<File>) {
-        if (files.isEmpty()) return
-        val settings = state.value.ocrSettings
-        if (settings.serverUrl.isBlank()) {
-            mutate { current ->
-                current.copy(
-                    selectedSection = DesktopSection.IMPORT,
-                    ocrStatus = text(current.language, "Укажи URL OCR сервера.", "Set OCR server URL first."),
-                )
-            }
-            return
-        }
-
-        mutate { current ->
-            current.copy(
-                selectedSection = DesktopSection.IMPORT,
-                ocrLoading = true,
-                ocrStatus = text(current.language, "Загрузка...", "Uploading..."),
-            )
-        }
-
-        scope.launch {
-            runCatching {
-                val response = if (files.size == 1) {
-                    val file = files.first()
-                    ocrClient.submitSingleImage(settings.serverUrl, settings.authToken, file.readBytes(), file.name)
-                } else {
-                    val job = ocrClient.submitJob(
-                        settings.serverUrl,
-                        settings.authToken,
-                        files.map { it.name to it.readBytes() },
-                    )
-                    ocrClient.pollJob(settings.serverUrl, settings.authToken, job.jobId)
-                }
-                buildImportMatches(response)
-            }.onSuccess { matches ->
-                mutate { current ->
-                    current.copy(
-                        importMatches = matches,
-                        ocrLoading = false,
-                        ocrStatus = text(current.language, "Совпадений: ${matches.count { it.bestMatch != null }}", "Matches: ${matches.count { it.bestMatch != null }}"),
-                    )
-                }
-            }.onFailure { error ->
-                mutate { current ->
-                    current.copy(ocrLoading = false, ocrStatus = friendlyOcrFailure(current.language, error))
-                }
-            }
-        }
-    }
-
-    private fun buildImportMatches(response: OcrJobResult): List<MatchedTrackCandidate> {
-        val remoteCandidates = state.value.snapshot.tracks.map { track ->
-            RemoteTrackCandidate(
-                sourceId = "local-library",
-                title = track.title,
-                artist = track.artist,
-                detailUrl = track.sourceUri,
-                downloadUrl = track.uri,
-            )
-        }
-        return ScreenshotImportMatcher
-            .deduplicate(response.candidates)
-            .map { candidate -> ScreenshotImportMatcher.pickBestMatch(candidate, remoteCandidates, state.value.selectedPlaylistTracks) }
-    }
-
     private fun mutate(persist: Boolean = true, transform: (DesktopUiState) -> DesktopUiState) {
         _state.update { current ->
             val updated = transform(current)
@@ -667,10 +583,6 @@ class DesktopController(
             currentTrackId = storedLibrary.snapshot.tracks.firstOrNull()?.id,
             playbackQueue = buildPlaybackQueue(storedLibrary.snapshot.tracks, storedLibrary.snapshot.tracks.firstOrNull()?.id, false, random),
             visualizer = PlaybackVisualizerState.idle(),
-            ocrSettings = OcrSettings(
-                serverUrl = config.ocrBaseUrl.orEmpty(),
-                authToken = config.ocrToken.orEmpty(),
-            ),
         )
         val restored = persistence.apply(base, persistence.load())
         val selectedPlaylist = storedLibrary.snapshot.playlists.firstOrNull { it.id == restored.selectedPlaylistId }
@@ -681,11 +593,10 @@ class DesktopController(
                 "Треков: ${storedLibrary.snapshot.tracks.size}",
                 "Tracks: ${storedLibrary.snapshot.tracks.size}",
             ),
-            // Idle status lines stay empty on purpose. They used to be seeded with prompts like
-            // "Запусти поиск" / "Выбери скриншоты", which are instructions, not status: they
-            // rendered permanently and read as clutter. A blank line hides its card entirely.
+            // The idle parser status stays empty on purpose. It used to be seeded with a prompt
+            // like "Запусти поиск", which is an instruction, not status: it rendered permanently
+            // and read as clutter. A blank line hides its card entirely.
             parserStatus = if (restored.parserResults.isEmpty()) "" else restored.parserStatus,
-            ocrStatus = if (restored.importMatches.isEmpty()) "" else restored.ocrStatus,
             spotlight = selectedPlaylist?.let { spotlightFor(it.name, it.tone) } ?: restored.spotlight,
         )
     }
@@ -889,21 +800,6 @@ class DesktopController(
             message.contains("not found in library", ignoreCase = true) ->
                 text(language, "Трек скачан, но ещё не появился в библиотеке.", "Track was saved but is not visible in the library yet.")
             else -> text(language, "Не удалось добавить трек.", "Failed to add the track.")
-        }
-    }
-
-    private fun friendlyOcrFailure(language: AppLanguage, error: Throwable): String {
-        val message = error.message.orEmpty()
-        return when {
-            message.contains("http://", ignoreCase = true) || message.contains("https://", ignoreCase = true) ->
-                text(language, "Проверь адрес OCR сервера.", "Check the OCR server URL.")
-            message.contains("HTTP 401", ignoreCase = true) || message.contains("HTTP 403", ignoreCase = true) ->
-                text(language, "Проверь OCR token.", "Check the OCR token.")
-            message.contains("did not finish in time", ignoreCase = true) || message.contains("timeout", ignoreCase = true) ->
-                text(language, "OCR отвечает слишком долго.", "OCR is taking too long to respond.")
-            message.contains("HTTP", ignoreCase = true) ->
-                text(language, "OCR сервер сейчас недоступен.", "OCR server is unavailable right now.")
-            else -> text(language, "Не удалось обработать скриншоты.", "Failed to process screenshots.")
         }
     }
 

@@ -41,9 +41,6 @@ fun DesktopApp() {
             onParserAddToPlaylist = controller::addParserResultToPlaylist,
             onImportLibraryFolders = { controller.importLibraryFolders(WindowsFileDialogs.pickFolders().map { file -> file.absolutePath }) },
             onRefreshLibrary = controller::refreshLibrary,
-            onOcrServerUrlChange = { controller.updateOcrSettings(serverUrl = it) },
-            onOcrTokenChange = { controller.updateOcrSettings(authToken = it) },
-            onPickScreenshots = { controller.analyzeScreenshots(WindowsFileDialogs.pickImageFiles()) },
         )
     }
 }

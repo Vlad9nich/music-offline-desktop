@@ -106,8 +106,6 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.IntOffset
-import com.yaneodex.core.importer.MatchedTrackCandidate
-import com.yaneodex.core.importer.ScreenshotImportItemStatus
 import com.yaneodex.core.model.PlaylistRecord
 import com.yaneodex.core.model.RemoteTrackCandidate
 import com.yaneodex.core.model.TrackRecord
@@ -197,9 +195,6 @@ fun MusicDesktopApp(
     onParserAddToPlaylist: (RemoteTrackCandidate) -> Unit,
     onImportLibraryFolders: () -> Unit,
     onRefreshLibrary: () -> Unit,
-    onOcrServerUrlChange: (String) -> Unit,
-    onOcrTokenChange: (String) -> Unit,
-    onPickScreenshots: () -> Unit,
 ) {
     val strings = desktopStrings(state.language)
 
@@ -335,9 +330,6 @@ fun MusicDesktopApp(
                         onParserAddToPlaylist = onParserAddToPlaylist,
                         onImportLibraryFolders = onImportLibraryFolders,
                         onRefreshLibrary = onRefreshLibrary,
-                        onOcrServerUrlChange = onOcrServerUrlChange,
-                        onOcrTokenChange = onOcrTokenChange,
-                        onPickScreenshots = onPickScreenshots,
                         onLanguageChange = onLanguageChange,
                     )
                     if (queuePanelOpen) {
@@ -434,8 +426,7 @@ private fun SidebarNavigation(
         NavItem(DesktopSection.SEARCH, strings.navSearch, "02", YdxGlyph.Search),
         NavItem(DesktopSection.PLAYLISTS, strings.navPlaylists, "03", YdxGlyph.Playlist),
         NavItem(DesktopSection.LIBRARY, strings.navLibrary, "04", YdxGlyph.Library),
-        NavItem(DesktopSection.IMPORT, strings.navImport, "05", YdxGlyph.Import),
-        NavItem(DesktopSection.SETTINGS, strings.navSettings, "06", YdxGlyph.Settings),
+        NavItem(DesktopSection.SETTINGS, strings.navSettings, "05", YdxGlyph.Settings),
     )
     val selectedIndex = items.indexOfFirst { it.section == selectedSection }.coerceAtLeast(0)
     val itemHeight = 40.dp
@@ -600,9 +591,6 @@ private fun MainColumn(
     onParserAddToPlaylist: (RemoteTrackCandidate) -> Unit,
     onImportLibraryFolders: () -> Unit,
     onRefreshLibrary: () -> Unit,
-    onOcrServerUrlChange: (String) -> Unit,
-    onOcrTokenChange: (String) -> Unit,
-    onPickScreenshots: () -> Unit,
     onLanguageChange: (AppLanguage) -> Unit,
 ) {
     Surface(modifier = modifier, color = Panel, shape = RoundedCornerShape(Wd2Radius.lg)) {
@@ -689,16 +677,11 @@ private fun MainColumn(
                                 )
                             }
                         }
-                        DesktopSection.IMPORT -> {
-                            ImportSection(state, strings, onOcrServerUrlChange, onOcrTokenChange, onPickScreenshots)
-                        }
                         DesktopSection.SETTINGS -> {
                             SettingsSection(
                                 state = state,
                                 strings = strings,
                                 onLanguageChange = onLanguageChange,
-                                onOcrServerUrlChange = onOcrServerUrlChange,
-                                onOcrTokenChange = onOcrTokenChange,
                             )
                         }
                     }
@@ -713,8 +696,6 @@ private fun SettingsSection(
     state: DesktopUiState,
     strings: DesktopStrings,
     onLanguageChange: (AppLanguage) -> Unit,
-    onOcrServerUrlChange: (String) -> Unit,
-    onOcrTokenChange: (String) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -729,10 +710,6 @@ private fun SettingsSection(
         SettingsDivider()
         Text(strings.settingsLanguage, color = TextDim, style = MaterialTheme.typography.labelLarge)
         LanguageSwitcher(state.language, strings, onLanguageChange = onLanguageChange)
-        SettingsDivider()
-        Text(strings.sectionOcrSettings, color = TextDim, style = MaterialTheme.typography.labelLarge)
-        LabeledField(strings.ocrServerLabel, state.ocrSettings.serverUrl, strings.ocrServerPlaceholder, onOcrServerUrlChange)
-        LabeledField(strings.bearerTokenLabel, state.ocrSettings.authToken, strings.bearerTokenPlaceholder, onOcrTokenChange)
         SettingsDivider()
         // Shortcuts used to be invisible; surfacing them is most of what makes the shell feel friendly.
         Text(strings.settingsShortcuts, color = TextDim, style = MaterialTheme.typography.labelLarge)
@@ -1005,33 +982,6 @@ private fun LibrarySection(
 }
 
 @Composable
-private fun ImportSection(
-    state: DesktopUiState,
-    strings: DesktopStrings,
-    onOcrServerUrlChange: (String) -> Unit,
-    onOcrTokenChange: (String) -> Unit,
-    onPickScreenshots: () -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        SectionTitle(strings.sectionOcrSettings)
-        Surface(shape = RoundedCornerShape(Wd2Radius.md), color = Panel) {
-            Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                LabeledField(strings.ocrServerLabel, state.ocrSettings.serverUrl, strings.ocrServerPlaceholder, onOcrServerUrlChange)
-                LabeledField(strings.bearerTokenLabel, state.ocrSettings.authToken, strings.bearerTokenPlaceholder, onOcrTokenChange)
-                AccentAction(strings.chooseScreenshotsAction, YdxGlyph.Folder, Moss, onPickScreenshots)
-            }
-        }
-        if (state.ocrStatus.isNotBlank()) {
-            StatusCard(strings.sectionOcr, state.ocrStatus)
-        }
-        if (state.importMatches.isNotEmpty()) {
-            SectionTitle(strings.sectionImportReview)
-            ImportMatches(state.importMatches, strings)
-        }
-    }
-}
-
-@Composable
 private fun RightRail(
     state: DesktopUiState,
     strings: DesktopStrings,
@@ -1040,7 +990,7 @@ private fun RightRail(
     onPlayTrack: (String) -> Unit,
 ) {
     val upNext = state.playbackQueue.take(if (metrics.compact) 3 else 6)
-    val statuses = listOf(state.parserStatus, state.ocrStatus).filter { it.isNotBlank() }
+    val statuses = listOf(state.parserStatus).filter { it.isNotBlank() }
 
     Surface(
         modifier = Modifier.width(metrics.rightRailWidth).fillMaxHeight(),
@@ -1761,32 +1711,6 @@ private fun ParserResults(
                         AccentChip(strings.previewAction, PanelRaised, onClick = { onParserPreview(item) })
                         AccentChip(strings.downloadAction, PanelRaised, onClick = { onParserDownload(item) })
                         AccentChip(strings.addAction, PanelRaised, onClick = { onParserAddToPlaylist(item) })
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ImportMatches(matches: List<MatchedTrackCandidate>, strings: DesktopStrings) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        matches.forEach { item ->
-            val accent = when (item.status) {
-                ScreenshotImportItemStatus.MATCHED -> Moss
-                ScreenshotImportItemStatus.ALREADY_IN_PLAYLIST -> Gold
-                ScreenshotImportItemStatus.LOW_CONFIDENCE_MATCH -> Coral
-                ScreenshotImportItemStatus.NOT_FOUND -> Muted
-                ScreenshotImportItemStatus.RECOGNIZED -> Sky
-            }
-            Surface(shape = RoundedCornerShape(Wd2Radius.md), color = Panel) {
-                Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(item.recognized.rawText, color = TextPrimary, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    item.message?.let { message ->
-                        Text(message, color = accent, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
-                    item.bestMatch?.let { match ->
-                        Text("${match.artist} - ${match.title}", color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }

@@ -36,7 +36,6 @@ enum class YdxGlyph {
     Playlist,
     Queue,
     Library,
-    Import,
     Settings,
     Panel,
     Play,
@@ -193,12 +192,6 @@ private fun DrawScope.drawGlyph(glyph: YdxGlyph, color: Color, u: Float, sw: Flo
         }
 
         // Arrow dropping into a tray — "import", not sparkles.
-        YdxGlyph.Import -> {
-            line(12f, 3.6f, 12f, 13.6f)
-            poly(8.2f, 10f, 12f, 13.9f, 15.8f, 10f)
-            poly(4.4f, 15.6f, 4.4f, 19.6f, 19.6f, 19.6f, 19.6f, 15.6f)
-        }
-
         // Two sliders: a rail broken by a knob.
         YdxGlyph.Settings -> {
             line(3.5f, 8.5f, 6.6f, 8.5f)

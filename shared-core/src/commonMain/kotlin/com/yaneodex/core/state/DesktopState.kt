@@ -1,6 +1,5 @@
 package com.yaneodex.core.state
 
-import com.yaneodex.core.importer.MatchedTrackCandidate
 import com.yaneodex.core.model.LibrarySnapshot
 import com.yaneodex.core.model.PlaylistRecord
 import com.yaneodex.core.model.RemoteTrackCandidate
@@ -13,7 +12,6 @@ enum class DesktopSection {
     SEARCH,
     PLAYLISTS,
     LIBRARY,
-    IMPORT,
     SETTINGS,
 }
 
@@ -50,12 +48,6 @@ data class PlaybackVisualizerState(
     }
 }
 
-@Serializable
-data class OcrSettings(
-    val serverUrl: String = "",
-    val authToken: String = "",
-)
-
 data class DesktopUiState(
     val snapshot: LibrarySnapshot,
     val libraryRoots: List<String>,
@@ -75,10 +67,6 @@ data class DesktopUiState(
     val parserResults: List<RemoteTrackCandidate>,
     val parserStatus: String,
     val parserLoading: Boolean,
-    val ocrSettings: OcrSettings,
-    val ocrStatus: String,
-    val ocrLoading: Boolean,
-    val importMatches: List<MatchedTrackCandidate>,
     val spotlight: SpotlightCard,
     val highlightedTag: String,
 ) {

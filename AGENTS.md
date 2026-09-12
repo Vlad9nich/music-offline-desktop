@@ -6,13 +6,13 @@
 - Root modules:
   - `shared-core`
   - `desktop-app`
-- This repository is intentionally separate from the Android app and OCR backend repository.
+- This repository is intentionally separate from the Android app repository.
 
 ## Product Goal
 
 - Build a real Windows desktop MVP for local offline music playback.
 - Avoid demo-only behavior in the main user flows.
-- Keep reusable queue/import/parser contracts in `shared-core`.
+- Keep reusable queue/parser contracts in `shared-core`.
 
 ## Current MVP Capabilities
 
@@ -23,8 +23,6 @@
 - supports queue playback and shuffle
 - searches remote parser source (`Ligaudio`)
 - resolves parser candidates to direct media URLs
-- sends screenshots to OCR backend
-- polls OCR batch jobs and maps OCR candidates to local library matches
 - supports playlist create, rename, add-track, remove-track
 
 ## Important Areas
@@ -38,8 +36,6 @@
   - `buildPlaybackQueue` (pins the current track, artist-aware spread)
   - `reshufflePlaybackQueue` (fresh cycle when the queue runs out)
   - `unshufflePlaybackQueue` (restore source order without moving the current track)
-- OCR matching:
-  - `shared-core/src/commonMain/kotlin/com/yaneodex/core/importer/ScreenshotImportMatcher.kt`
 - UI state models:
   - `shared-core/src/commonMain/kotlin/com/yaneodex/core/state/DesktopState.kt`
 
@@ -60,8 +56,6 @@
   - `desktop-app/src/jvmMain/kotlin/com/yaneodex/desktop/integration/JavaFxPlaybackBackend.kt`
 - parser integration:
   - `desktop-app/src/jvmMain/kotlin/com/yaneodex/desktop/integration/DesktopMusicSources.kt`
-- OCR client:
-  - `desktop-app/src/jvmMain/kotlin/com/yaneodex/desktop/integration/WindowsOcrClient.kt`
 - desktop config:
   - `desktop-app/src/jvmMain/kotlin/com/yaneodex/desktop/integration/DesktopConfig.kt`
 
@@ -69,8 +63,6 @@
 
 - Optional `.env` values:
   - `YANEODEX_LIBRARY_PATH`
-  - `YANEODEX_OCR_BASE_URL`
-  - `YANEODEX_OCR_TOKEN`
   - `YANEODEX_DOWNLOAD_DIR`
 - Local persistent app state:
   - `%USERPROFILE%\.yaneodex-desktop\library.json`
@@ -91,14 +83,6 @@
 
 - Packaging on Windows is slow because Compose native distribution builds runtime image and installer tooling.
 - Playback uses JavaFX Media, so codec support depends on Windows media/runtime support.
-- OCR backend must remain compatible with the existing FastAPI contract:
-  - `candidateId`
-  - `screenshotIndex`
-  - `rawText`
-  - `artistGuess`
-  - `titleGuess`
-  - `confidence`
-  - `bbox`
 
 ## Guidance For Future AI Sessions
 
@@ -109,7 +93,10 @@
   - `:desktop-app:build`
 - Do not run packaging tasks on every small change.
 - Treat this repository as the new desktop codebase; do not mix Android-specific assumptions here.
-- Keep OCR and parser contracts backward-compatible unless explicitly changing both sides.
+- Keep parser contracts backward-compatible unless explicitly changing both sides.
+- The OCR screenshot-import path was removed on purpose. Do not reintroduce it: it required an
+  external FastAPI service to do what the local library scan already covers, and it carried a
+  whole second import surface (nav section, settings, status strings) for a flow nobody used.
 - Avoid reintroducing demo-only state into the primary controller flows.
 
 ## Playback And UI Invariants

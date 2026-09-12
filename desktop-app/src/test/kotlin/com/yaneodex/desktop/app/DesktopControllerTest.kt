@@ -2,9 +2,6 @@ package com.yaneodex.desktop.app
 
 import com.yaneodex.core.contracts.LibraryRepository
 import com.yaneodex.core.contracts.MusicSourceCatalog
-import com.yaneodex.core.contracts.OcrCreateJobResult
-import com.yaneodex.core.contracts.OcrImportClient
-import com.yaneodex.core.contracts.OcrJobResult
 import com.yaneodex.core.contracts.PlaybackBackend
 import com.yaneodex.core.contracts.PlaybackSnapshot
 import com.yaneodex.core.contracts.StoredLibraryState
@@ -189,15 +186,6 @@ class DesktopControllerTest {
     }
 
     @Test
-    fun `missing ocr url shows friendly status`() {
-        val controller = controller(backend = FakePlaybackBackend())
-
-        controller.analyzeScreenshots(listOf(File("C:\\temp\\shot-1.jpg")))
-
-        assertEquals("Укажи URL OCR сервера.", controller.state.value.ocrStatus)
-    }
-
-    @Test
     fun `toggling shuffle pushes the new order to the player in place`() {
         val backend = FakePlaybackBackend()
         val controller = controller(backend = backend, libraryRepository = FakeLibraryRepository(extraTracks = 11))
@@ -268,17 +256,15 @@ class DesktopControllerTest {
     private fun controller(
         backend: FakePlaybackBackend,
         sourceCatalog: MusicSourceCatalog = FakeMusicSourceCatalog(),
-        ocrClient: OcrImportClient = FakeOcrClient(),
         downloadManager: DownloadManager = FakeDownloadManager(),
         libraryRepository: FakeLibraryRepository = FakeLibraryRepository(),
     ): DesktopController {
         val stateFile = File.createTempFile("yaneodex-controller", ".json")
         stateFile.deleteOnExit()
         return DesktopController(
-            config = DesktopConfig(null, null, null, null),
+            config = DesktopConfig(null, null),
             libraryRepository = libraryRepository,
             sourceCatalog = sourceCatalog,
-            ocrClient = ocrClient,
             persistence = DesktopPersistence(stateFile),
             playbackBackend = backend,
             downloadManager = downloadManager,
@@ -363,17 +349,6 @@ private class FakeDownloadManager : DownloadManager {
     override fun download(blueprint: DownloadBlueprint, targetDirectory: File): File {
         return File(targetDirectory, blueprint.suggestedFilename)
     }
-}
-
-private class FakeOcrClient : OcrImportClient {
-    override fun submitSingleImage(serverUrl: String, authToken: String, fileBytes: ByteArray, filename: String): OcrJobResult =
-        OcrJobResult(status = "completed")
-
-    override fun submitJob(serverUrl: String, authToken: String, files: List<Pair<String, ByteArray>>): OcrCreateJobResult =
-        OcrCreateJobResult(jobId = "job-1")
-
-    override fun pollJob(serverUrl: String, authToken: String, jobId: String): OcrJobResult =
-        OcrJobResult(status = "completed")
 }
 
 private class FakeMusicSourceCatalog : MusicSourceCatalog {
