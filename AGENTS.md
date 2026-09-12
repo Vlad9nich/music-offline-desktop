@@ -35,6 +35,9 @@
   - `shared-core/src/commonMain/kotlin/com/yaneodex/core/contracts/CoreContracts.kt`
 - queue/shuffle logic:
   - `shared-core/src/commonMain/kotlin/com/yaneodex/core/playback/QueueShuffle.kt`
+  - `buildPlaybackQueue` (pins the current track, artist-aware spread)
+  - `reshufflePlaybackQueue` (fresh cycle when the queue runs out)
+  - `unshufflePlaybackQueue` (restore source order without moving the current track)
 - OCR matching:
   - `shared-core/src/commonMain/kotlin/com/yaneodex/core/importer/ScreenshotImportMatcher.kt`
 - UI state models:
@@ -108,3 +111,24 @@
 - Treat this repository as the new desktop codebase; do not mix Android-specific assumptions here.
 - Keep OCR and parser contracts backward-compatible unless explicitly changing both sides.
 - Avoid reintroducing demo-only state into the primary controller flows.
+
+## Playback And UI Invariants
+
+These are load-bearing; breaking them is what caused the desync bugs fixed in the redesign.
+
+- The queue order lives in exactly one place. Any code that changes `playbackQueue` must push the
+  same order to the player — use `DesktopController.mutate` (which flushes `pendingBackendQueue`)
+  or call `PlaybackBackend.setQueue` explicitly. `setQueue` swaps the order **without** restarting
+  the current track; `playQueue` restarts playback and is only for starting a new queue.
+- `PlaybackSnapshot.queueExhausted` is a request for a decision, not an end state. The controller
+  answers it in `continueAfterQueueEnd()` (reshuffle when shuffled, wrap around otherwise).
+- The visualizer is smoothed in the renderer, not in the controller. `PlaybackVisualizerState`
+  carries raw targets at ~30 fps; the canvas eases them on the display frame clock. Band count is
+  always `VISUALIZER_BANDS` (32). `spectrumLive = false` means the bars are a generated fallback
+  for a codec whose spectrum JavaFX reports as flat — surface that honestly, never silently fake it.
+- Design tokens live in `ui/theme/YaNeoDexDesktopTheme.kt`. Depth comes from surface lightness
+  (`Bg` -> `Panel` -> `PanelRaised` -> `PanelHover`); hairlines are low-contrast by design. Use
+  `Wd2Fonts.Content` for language, `Wd2Fonts.Meta` for counters/timers, and `Wd2.Accent` only for
+  active state and primary actions. Radii come from `Wd2Radius`.
+- Avoid full-screen animated overlays. The CRT layer is intentionally static; an always-running
+  full-window repaint is a measurable cost and was the main source of the harsh look.

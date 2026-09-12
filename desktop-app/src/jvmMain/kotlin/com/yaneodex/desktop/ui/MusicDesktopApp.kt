@@ -1,6 +1,8 @@
 package com.yaneodex.desktop.ui
 
 import com.yaneodex.desktop.ui.theme.Wd2
+import com.yaneodex.desktop.ui.theme.Wd2Fonts
+import com.yaneodex.desktop.ui.theme.Wd2Radius
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
@@ -52,6 +54,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.NavigateBefore
 import androidx.compose.material.icons.automirrored.rounded.NavigateNext
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
@@ -67,6 +71,8 @@ import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.MenuOpen
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -87,6 +93,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.composed
@@ -94,15 +101,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -125,17 +138,29 @@ import com.yaneodex.core.state.AppLanguage
 import com.yaneodex.core.state.DesktopSection
 import com.yaneodex.core.state.DesktopUiState
 import com.yaneodex.core.state.PlaybackVisualizerState
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
-// Watch Dogs 2 HUD — B/W pixel + red signal
+// ctOS shell — near-black ground, white type, red signal
 private val Panel = Wd2.Panel
 private val PanelRaised = Wd2.PanelRaised
 private val Outline = Wd2.LineDim
 private val Muted = Wd2.Muted
 private val TextPrimary = Wd2.Text
+private val TextDim = Wd2.TextDim
 private val Moss = Wd2.Text        // "live" reads as white pulse
 private val Gold = Wd2.Accent      // red
+
+/** How many sections the back/forward history keeps. */
+private const val NAV_HISTORY_LIMIT = 20
+
+/** Single band count everywhere, so the visualizer never thrashes between 24 and 32. */
+private const val VISUALIZER_BANDS = 32
+private const val DEFAULT_FRAME_SECONDS = 1f / 60f
+private const val ATTACK_PER_FRAME = 0.45f
+private const val RELEASE_PER_FRAME = 0.14f
+private const val PEAK_FALL_PER_SECOND = 0.6f
 private val Sky = Wd2.TextDim
 private val Coral = Wd2.Warn
 
@@ -200,31 +225,113 @@ fun MusicDesktopApp(
     onPickScreenshots: () -> Unit,
 ) {
     val strings = desktopStrings(state.language)
+
+    // Navigation behaves like a browser: back/forward over the sections you actually visited.
+    var backStack by remember { mutableStateOf(emptyList<DesktopSection>()) }
+    var forwardStack by remember { mutableStateOf(emptyList<DesktopSection>()) }
+    var lastSection by remember { mutableStateOf(state.selectedSection) }
+
+    // Sidebar and queue rail are chrome the listener can fold away; both default to open.
+    var sidebarCollapsed by remember { mutableStateOf(false) }
+    var queuePanelOpen by remember { mutableStateOf(true) }
+    var searchFocused by remember { mutableStateOf(false) }
+    val shortcutFocus = remember { FocusRequester() }
+
+    LaunchedEffect(state.selectedSection) {
+        if (state.selectedSection != lastSection) {
+            backStack = (backStack + lastSection).takeLast(NAV_HISTORY_LIMIT)
+            forwardStack = emptyList()
+            lastSection = state.selectedSection
+        }
+    }
+
+    LaunchedEffect(Unit) { runCatching { shortcutFocus.requestFocus() } }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(Wd2.Bg),
+            .background(Wd2.Bg)
+            .focusRequester(shortcutFocus)
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when {
+                    // Space is the universal play/pause, unless the listener is typing.
+                    event.key == Key.Spacebar && !searchFocused && !event.isCtrlPressed -> {
+                        onTogglePlayPause()
+                        true
+                    }
+                    event.isCtrlPressed && event.key == Key.DirectionRight -> {
+                        onPlayNext()
+                        true
+                    }
+                    event.isCtrlPressed && event.key == Key.DirectionLeft -> {
+                        onPlayPrevious()
+                        true
+                    }
+                    event.isCtrlPressed && event.key == Key.Spacebar -> {
+                        onTogglePlayPause()
+                        true
+                    }
+                    else -> false
+                }
+            },
     ) {
-        val metrics = remember(maxWidth) {
-            when {
+        val metrics = remember(maxWidth, sidebarCollapsed, queuePanelOpen) {
+            val base = when {
                 maxWidth < 1180.dp -> LayoutMetrics(10.dp, 10.dp, 200.dp, 220.dp, 280.dp, 170.dp, true)
                 maxWidth < 1480.dp -> LayoutMetrics(12.dp, 12.dp, 220.dp, 250.dp, 360.dp, 220.dp, false)
                 else -> LayoutMetrics(14.dp, 14.dp, 240.dp, 280.dp, 430.dp, 260.dp, false)
             }
+            base.copy(sidebarWidth = if (sidebarCollapsed) 68.dp else base.sidebarWidth)
         }
 
-        // Full-screen WD2 atmosphere (pixel grid + static + scanlines)
+        // Static, very low-contrast atmosphere. The animated CRT layer is gone: it repainted the
+        // whole window forever, including while paused, and was a large part of the harsh look.
         CrtAtmosphere()
         Row(
             modifier = Modifier.fillMaxSize().padding(metrics.pagePadding),
             horizontalArrangement = Arrangement.spacedBy(metrics.sectionGap),
         ) {
-            Sidebar(state, strings, metrics, onSelectSection, onLanguageChange)
+            Sidebar(
+                state = state,
+                strings = strings,
+                metrics = metrics,
+                collapsed = sidebarCollapsed,
+                onToggleCollapsed = { sidebarCollapsed = !sidebarCollapsed },
+                onSelectSection = onSelectSection,
+                onLanguageChange = onLanguageChange,
+            )
             Column(
                 modifier = Modifier.weight(1f).fillMaxHeight(),
                 verticalArrangement = Arrangement.spacedBy(metrics.sectionGap),
             ) {
-                TopBar(state.searchQuery, strings, metrics, onSearchChange, onRunParserSearch)
+                TopBar(
+                    query = state.searchQuery,
+                    strings = strings,
+                    metrics = metrics,
+                    canGoBack = backStack.isNotEmpty(),
+                    canGoForward = forwardStack.isNotEmpty(),
+                    queuePanelOpen = queuePanelOpen,
+                    onNavigateBack = {
+                        val previous = backStack.lastOrNull() ?: return@TopBar
+                        backStack = backStack.dropLast(1)
+                        forwardStack = forwardStack + state.selectedSection
+                        lastSection = previous
+                        onSelectSection(previous)
+                    },
+                    onNavigateForward = {
+                        val next = forwardStack.lastOrNull() ?: return@TopBar
+                        forwardStack = forwardStack.dropLast(1)
+                        backStack = backStack + state.selectedSection
+                        lastSection = next
+                        onSelectSection(next)
+                    },
+                    onToggleQueuePanel = { queuePanelOpen = !queuePanelOpen },
+                    onSearchChange = onSearchChange,
+                    onSearchFocusChange = { searchFocused = it },
+                    onRunParserSearch = onRunParserSearch,
+                )
                 Row(
                     modifier = Modifier.weight(1f),
                     horizontalArrangement = Arrangement.spacedBy(metrics.sectionGap),
@@ -256,7 +363,9 @@ fun MusicDesktopApp(
                         onPickScreenshots = onPickScreenshots,
                         onLanguageChange = onLanguageChange,
                     )
-                    RightRail(state, strings, metrics, onToggleShuffle, onPlayTrack)
+                    if (queuePanelOpen) {
+                        RightRail(state, strings, metrics, onToggleShuffle, onPlayTrack)
+                    }
                 }
                 BottomPlayer(state, strings, metrics, onTogglePlayPause, onPlayPrevious, onPlayNext, onSeekPlayback, onSetPlaybackVolume, onToggleShuffle)
             }
@@ -269,49 +378,63 @@ private fun Sidebar(
     state: DesktopUiState,
     strings: DesktopStrings,
     metrics: LayoutMetrics,
+    collapsed: Boolean,
+    onToggleCollapsed: () -> Unit,
     onSelectSection: (DesktopSection) -> Unit,
     onLanguageChange: (AppLanguage) -> Unit,
 ) {
     Surface(
         modifier = Modifier
             .width(metrics.sidebarWidth)
-            .fillMaxHeight()
-            .border(1.dp, Outline),
+            .fillMaxHeight(),
         color = Panel,
-        shape = RoundedCornerShape(0.dp),
+        shape = RoundedCornerShape(Wd2Radius.lg),
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = if (collapsed) 8.dp else 12.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            // Top status bar strip
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Wd2.Accent)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("ctOS", color = TextPrimary, style = MaterialTheme.typography.labelSmall)
-                Text("ONLINE", color = TextPrimary, style = MaterialTheme.typography.labelSmall)
+                Box(Modifier.size(8.dp).clip(CircleShape).background(Wd2.Accent))
+                if (!collapsed) {
+                    Text(
+                        "YANEODEX",
+                        color = TextPrimary,
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+                RoundAction(
+                    icon = if (collapsed) Icons.Rounded.Menu else Icons.Rounded.MenuOpen,
+                    active = false,
+                    onClick = onToggleCollapsed,
+                    size = 28.dp,
+                    iconSize = 16.dp,
+                    subdued = true,
+                )
             }
-            Text("KAIRSEC // NODE", color = Gold, style = MaterialTheme.typography.labelMedium)
-            Text(
-                "YANEODEX",
-                color = TextPrimary,
-                style = MaterialTheme.typography.headlineLarge,
-                fontFamily = FontFamily.Monospace,
-            )
-            Text(
-                "DESKTOP  BUILD  0.1.2",
-                color = Muted,
-                style = MaterialTheme.typography.labelSmall,
-            )
-            Text("────────────────────", color = Outline, style = MaterialTheme.typography.labelSmall, maxLines = 1)
-            SidebarNavigation(state.selectedSection, strings, onSelectSection)
+
+            if (!collapsed) {
+                Text(
+                    "OFFLINE NODE · BUILD 0.1.2",
+                    color = Muted,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(start = 16.dp, bottom = 8.dp),
+                    maxLines = 1,
+                )
+            }
+
+            SidebarNavigation(state.selectedSection, strings, collapsed, onSelectSection)
             Spacer(Modifier.weight(1f))
-            Text("────────────────────", color = Outline, style = MaterialTheme.typography.labelSmall, maxLines = 1)
-            LanguageSwitcher(state.language, strings, onLanguageChange)
+            LanguageSwitcher(state.language, strings, collapsed, onLanguageChange)
         }
     }
 }
@@ -320,22 +443,24 @@ private fun Sidebar(
 private fun SidebarNavigation(
     selectedSection: DesktopSection,
     strings: DesktopStrings,
+    collapsed: Boolean,
     onSelectSection: (DesktopSection) -> Unit,
 ) {
+    // Labels read as language now; the terminal index stays as a quiet mono detail.
     val items = listOf(
-        Triple(DesktopSection.HOME, "01  ${strings.navHome.uppercase()}", Icons.Rounded.Home),
-        Triple(DesktopSection.SEARCH, "02  ${strings.navSearch.uppercase()}", Icons.Rounded.Search),
-        Triple(DesktopSection.PLAYLISTS, "03  ${strings.navPlaylists.uppercase()}", Icons.AutoMirrored.Rounded.PlaylistPlay),
-        Triple(DesktopSection.LIBRARY, "04  ${strings.navLibrary.uppercase()}", Icons.Rounded.LibraryMusic),
-        Triple(DesktopSection.IMPORT, "05  ${strings.navImport.uppercase()}", Icons.Rounded.AutoAwesome),
-        Triple(DesktopSection.SETTINGS, "06  ${strings.navSettings.uppercase()}", Icons.Rounded.Tune),
+        NavItem(DesktopSection.HOME, strings.navHome, "01", Icons.Rounded.Home),
+        NavItem(DesktopSection.SEARCH, strings.navSearch, "02", Icons.Rounded.Search),
+        NavItem(DesktopSection.PLAYLISTS, strings.navPlaylists, "03", Icons.AutoMirrored.Rounded.PlaylistPlay),
+        NavItem(DesktopSection.LIBRARY, strings.navLibrary, "04", Icons.Rounded.LibraryMusic),
+        NavItem(DesktopSection.IMPORT, strings.navImport, "05", Icons.Rounded.AutoAwesome),
+        NavItem(DesktopSection.SETTINGS, strings.navSettings, "06", Icons.Rounded.Tune),
     )
-    val selectedIndex = items.indexOfFirst { it.first == selectedSection }.coerceAtLeast(0)
-    val itemHeight = 44.dp
-    val itemSpacing = 4.dp
+    val selectedIndex = items.indexOfFirst { it.section == selectedSection }.coerceAtLeast(0)
+    val itemHeight = 40.dp
+    val itemSpacing = 2.dp
     val highlightOffset by animateDpAsState(
         targetValue = (itemHeight + itemSpacing) * selectedIndex,
-        animationSpec = tween(220),
+        animationSpec = tween(260, easing = androidx.compose.animation.core.FastOutSlowInEasing),
         label = "sidebar-selection-offset",
     )
 
@@ -345,64 +470,128 @@ private fun SidebarNavigation(
                 .padding(top = highlightOffset)
                 .fillMaxWidth()
                 .height(itemHeight)
+                .clip(RoundedCornerShape(Wd2Radius.md))
                 .background(Wd2.AccentSoft),
         ) {
             Box(Modifier.width(3.dp).fillMaxHeight().background(Wd2.Accent)) {}
             Spacer(Modifier.weight(1f))
         }
         Column(verticalArrangement = Arrangement.spacedBy(itemSpacing)) {
-            items.forEach { (section, label, icon) ->
+            items.forEach { item ->
                 NavPill(
-                    label = label,
-                    icon = icon,
-                    selected = section == selectedSection,
-                    onClick = { onSelectSection(section) },
+                    label = item.label,
+                    index = item.index,
+                    icon = item.icon,
+                    collapsed = collapsed,
+                    selected = item.section == selectedSection,
+                    onClick = { onSelectSection(item.section) },
                 )
             }
         }
     }
 }
 
+private data class NavItem(
+    val section: DesktopSection,
+    val label: String,
+    val index: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+)
+
 @Composable
 private fun TopBar(
     query: String,
     strings: DesktopStrings,
     metrics: LayoutMetrics,
+    canGoBack: Boolean,
+    canGoForward: Boolean,
+    queuePanelOpen: Boolean,
+    onNavigateBack: () -> Unit,
+    onNavigateForward: () -> Unit,
+    onToggleQueuePanel: () -> Unit,
     onSearchChange: (String) -> Unit,
+    onSearchFocusChange: (Boolean) -> Unit,
     onRunParserSearch: (String) -> Unit,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(strings.topTitle, color = TextPrimary, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+        // Browser-style history controls, the way Spotify's desktop shell does it.
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            RoundAction(
+                icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                active = false,
+                onClick = onNavigateBack,
+                enabled = canGoBack,
+                size = 34.dp,
+                iconSize = 18.dp,
+                subdued = true,
+            )
+            RoundAction(
+                icon = Icons.AutoMirrored.Rounded.ArrowForward,
+                active = false,
+                onClick = onNavigateForward,
+                enabled = canGoForward,
+                size = 34.dp,
+                iconSize = 18.dp,
+                subdued = true,
+            )
+        }
+
+        Text(
+            strings.topTitle,
+            color = TextPrimary,
+            style = MaterialTheme.typography.headlineLarge,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+
         Row(
             modifier = Modifier
                 .width(metrics.searchWidth)
-                .clip(RoundedCornerShape(0.dp))
-                .background(Panel)
-                .border(1.dp, Outline, RoundedCornerShape(0.dp))
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .clip(RoundedCornerShape(Wd2Radius.pill))
+                .background(PanelRaised)
+                .padding(horizontal = 14.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Icon(Icons.Rounded.Search, contentDescription = null, tint = Muted)
+            Icon(Icons.Rounded.Search, contentDescription = null, tint = Muted, modifier = Modifier.size(18.dp))
             BasicTextField(
                 value = query,
                 onValueChange = onSearchChange,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .onFocusChanged { onSearchFocusChange(it.isFocused) },
                 singleLine = true,
                 cursorBrush = SolidColor(Wd2.Accent),
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = TextPrimary),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = TextPrimary),
                 decorationBox = { inner ->
                     if (query.isBlank()) {
-                        Text(strings.searchPlaceholder, color = Muted, style = MaterialTheme.typography.bodyLarge)
+                        Text(strings.searchPlaceholder, color = Muted, style = MaterialTheme.typography.bodyMedium)
                     }
                     inner()
                 },
             )
-            PillButton(strings.runAction.uppercase(), Gold) { onRunParserSearch(query) }
+            if (query.isNotBlank()) {
+                RoundAction(
+                    icon = Icons.Rounded.Search,
+                    active = true,
+                    onClick = { onRunParserSearch(query) },
+                    size = 28.dp,
+                    iconSize = 15.dp,
+                )
+            }
         }
+
+        RoundAction(
+            icon = Icons.AutoMirrored.Rounded.QueueMusic,
+            active = queuePanelOpen,
+            onClick = onToggleQueuePanel,
+            size = 34.dp,
+            iconSize = 18.dp,
+        )
     }
 }
 
@@ -434,10 +623,10 @@ private fun MainColumn(
     onPickScreenshots: () -> Unit,
     onLanguageChange: (AppLanguage) -> Unit,
 ) {
-    Surface(modifier = modifier, color = Color(0xCC0A0A0A), shape = RoundedCornerShape(0.dp)) {
+    Surface(modifier = modifier, color = Panel, shape = RoundedCornerShape(Wd2Radius.lg)) {
         Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(if (metrics.compact) 14.dp else 18.dp),
-            verticalArrangement = Arrangement.spacedBy(if (metrics.compact) 14.dp else 16.dp),
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(if (metrics.compact) 16.dp else 22.dp),
+            verticalArrangement = Arrangement.spacedBy(if (metrics.compact) 16.dp else 20.dp),
         ) {
             Hero(state, strings, onPlayPlaylist)
             Box(
@@ -448,8 +637,17 @@ private fun MainColumn(
                 AnimatedContent(
                     targetState = state.selectedSection,
                     transitionSpec = {
-                        // Calmer: fade only (no slide springs)
-                        (fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(160)))
+                        // Directional motion: content follows the sidebar instead of just blinking.
+                        val forward = targetState.ordinal >= initialState.ordinal
+                        val enter = slideInHorizontally(
+                            animationSpec = tween(260, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                            initialOffsetX = { width -> if (forward) (width / 12) else -(width / 12) },
+                        ) + fadeIn(animationSpec = tween(220))
+                        val exit = slideOutHorizontally(
+                            animationSpec = tween(200, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                            targetOffsetX = { width -> if (forward) -(width / 16) else (width / 16) },
+                        ) + fadeOut(animationSpec = tween(160))
+                        enter togetherWith exit
                     },
                     contentAlignment = Alignment.TopStart,
                     label = "desktop-section-transition",
@@ -532,21 +730,29 @@ private fun SettingsSection(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, Outline)
+            .clip(RoundedCornerShape(Wd2Radius.lg))
             .background(Panel)
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text(strings.settingsTitle, color = Gold, style = MaterialTheme.typography.titleLarge)
-        Text(strings.settingsAbout, color = Muted, style = MaterialTheme.typography.bodyMedium)
-        Text("────────────────────────────────", color = Outline, style = MaterialTheme.typography.labelSmall, maxLines = 1)
-        Text(strings.settingsLanguage.uppercase(), color = TextPrimary, style = MaterialTheme.typography.labelMedium)
-        LanguageSwitcher(state.language, strings, onLanguageChange)
-        Text("────────────────────────────────", color = Outline, style = MaterialTheme.typography.labelSmall, maxLines = 1)
-        Text(strings.sectionOcrSettings.uppercase(), color = TextPrimary, style = MaterialTheme.typography.labelMedium)
+        Text(strings.settingsTitle, color = TextPrimary, style = MaterialTheme.typography.headlineLarge)
+        Text(strings.settingsAbout, color = TextDim, style = MaterialTheme.typography.bodyMedium)
+        SettingsDivider()
+        Text(strings.settingsLanguage, color = TextDim, style = MaterialTheme.typography.labelLarge)
+        LanguageSwitcher(state.language, strings, onLanguageChange = onLanguageChange)
+        SettingsDivider()
+        Text(strings.sectionOcrSettings, color = TextDim, style = MaterialTheme.typography.labelLarge)
         LabeledField(strings.ocrServerLabel, state.ocrSettings.serverUrl, strings.ocrServerPlaceholder, onOcrServerUrlChange)
         LabeledField(strings.bearerTokenLabel, state.ocrSettings.authToken, strings.bearerTokenPlaceholder, onOcrTokenChange)
-        Text("────────────────────────────────", color = Outline, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+        SettingsDivider()
+        // Shortcuts used to be invisible; surfacing them is most of what makes the shell feel friendly.
+        Text(strings.settingsShortcuts, color = TextDim, style = MaterialTheme.typography.labelLarge)
+        ShortcutRow("Space", strings.shortcutPlayPause)
+        ShortcutRow("Ctrl + ←", strings.shortcutPrevious)
+        ShortcutRow("Ctrl + →", strings.shortcutNext)
+        ShortcutRow("← / →", strings.shortcutSeek)
+        SettingsDivider()
+        Text(strings.settingsLibrary, color = TextDim, style = MaterialTheme.typography.labelLarge)
         Text(
             buildLibraryStatusText(state, strings),
             color = Muted,
@@ -556,44 +762,87 @@ private fun SettingsSection(
 }
 
 @Composable
+private fun SettingsDivider() {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(Wd2.LineDim),
+    )
+}
+
+@Composable
+private fun ShortcutRow(keys: String, description: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(description, color = TextPrimary, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            keys,
+            color = TextDim,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier
+                .clip(RoundedCornerShape(Wd2Radius.sm))
+                .background(PanelRaised)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        )
+    }
+}
+
+@Composable
 private fun Hero(state: DesktopUiState, strings: DesktopStrings, onPlayPlaylist: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(208.dp)
-            .clip(RoundedCornerShape(0.dp))
-            .background(Wd2.BgElevated)
-            .border(1.dp, Wd2.Line)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .height(196.dp)
+            .clip(RoundedCornerShape(Wd2Radius.lg))
+            .background(
+                Brush.horizontalGradient(
+                    listOf(
+                        Wd2.PanelRaised,
+                        Wd2.Panel,
+                    ),
+                ),
+            )
+            .padding(horizontal = 20.dp, vertical = 16.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxSize(),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(
                 modifier = Modifier.weight(1.05f).fillMaxHeight(),
                 verticalArrangement = Arrangement.SpaceBetween,
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        if (state.isPlaying) "> SIGNAL // LIVE" else "> SIGNAL // IDLE",
-                        color = if (state.isPlaying) Wd2.Accent else Muted,
-                        style = MaterialTheme.typography.labelSmall,
-                    )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(if (state.isPlaying) Wd2.Accent else Muted),
+                        )
+                        Text(
+                            if (state.isPlaying) "Сейчас играет" else "Пауза",
+                            color = if (state.isPlaying) Wd2.Accent else Muted,
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
                     Crossfade(state.currentTrack?.title ?: state.spotlight.title, label = "hero-track-title") { title ->
                         Text(
                             title,
                             color = TextPrimary,
                             style = MaterialTheme.typography.displayLarge,
-                            fontFamily = FontFamily.Monospace,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
                     Text(
                         state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle,
-                        color = Color(0xFFC8CDC8),
+                        color = TextDim,
                         style = MaterialTheme.typography.bodyLarge,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -607,12 +856,12 @@ private fun Hero(state: DesktopUiState, strings: DesktopStrings, onPlayPlaylist:
                 modifier = Modifier
                     .weight(0.95f)
                     .fillMaxHeight()
-                    .clip(RoundedCornerShape(0.dp))
-                    .background(Color(0x22101010)),
+                    .clip(RoundedCornerShape(Wd2Radius.md))
+                    .background(Wd2.Bg),
             ) {
                 PlaybackVisualizer(
                     state = state.visualizer,
-                    modifier = Modifier.align(Alignment.Center).fillMaxWidth().height(128.dp).padding(horizontal = 14.dp),
+                    modifier = Modifier.align(Alignment.Center).fillMaxWidth().height(112.dp).padding(horizontal = 14.dp),
                     accent = parseTone(state.spotlight.accent),
                     dense = true,
                 )
@@ -632,17 +881,16 @@ private fun OnboardingSection(
         modifier = Modifier
             .fillMaxWidth()
             .height(280.dp)
-            .clip(RoundedCornerShape(0.dp))
+            .clip(RoundedCornerShape(Wd2Radius.lg))
             .background(
                 Brush.linearGradient(
                     listOf(
-                        Moss.copy(alpha = 0.18f),
-                        Color(0xFF191C1A),
-                        Color(0xFF0D0F0E),
+                        PanelRaised,
+                        Wd2.Panel,
+                        Wd2.Bg,
                     ),
                 ),
             )
-            .border(1.dp, Outline, RoundedCornerShape(0.dp))
             .padding(28.dp),
     ) {
         Column(
@@ -650,7 +898,8 @@ private fun OnboardingSection(
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(strings.onboardingTitle, color = TextPrimary, style = MaterialTheme.typography.displaySmall, fontFamily = FontFamily.Serif)
+                Text(strings.onboardingTitle, color = TextPrimary, style = MaterialTheme.typography.displaySmall)
+                Text(strings.onboardingSubtitle, color = TextDim, style = MaterialTheme.typography.bodyLarge)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 AccentAction(strings.onboardingPrimaryAction, Icons.Rounded.FolderOpen, Moss, onImportLibraryFolders)
@@ -777,7 +1026,7 @@ private fun ImportSection(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SectionTitle(strings.sectionOcrSettings)
-        Surface(shape = RoundedCornerShape(0.dp), color = Panel) {
+        Surface(shape = RoundedCornerShape(Wd2Radius.md), color = Panel) {
             Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 LabeledField(strings.ocrServerLabel, state.ocrSettings.serverUrl, strings.ocrServerPlaceholder, onOcrServerUrlChange)
                 LabeledField(strings.bearerTokenLabel, state.ocrSettings.authToken, strings.bearerTokenPlaceholder, onOcrTokenChange)
@@ -798,19 +1047,19 @@ private fun RightRail(
     onToggleShuffle: () -> Unit,
     onPlayTrack: (String) -> Unit,
 ) {
-    Surface(modifier = Modifier.width(metrics.rightRailWidth).fillMaxHeight(), color = Color(0xCC101111), shape = RoundedCornerShape(0.dp)) {
+    Surface(modifier = Modifier.width(metrics.rightRailWidth).fillMaxHeight(), color = Panel, shape = RoundedCornerShape(Wd2Radius.lg)) {
         Column(modifier = Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(strings.sectionNowShaping, color = Gold, style = MaterialTheme.typography.labelSmall)
+            Text(strings.sectionNowShaping, color = TextDim, style = MaterialTheme.typography.labelLarge)
             CompactNowPlayingCard(
                 title = state.currentTrack?.title ?: strings.noTrackSelected,
                 subtitle = state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle,
             )
-            // Single quiet status strip instead of 4 bordered MiniPanels
+            // Shuffle toggle doubles as the queue summary.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(0.dp))
-                    .background(PanelRaised)
+                    .clip(RoundedCornerShape(Wd2Radius.md))
+                    .background(if (state.shuffleEnabled) Wd2.AccentSoft else PanelRaised)
                     .pressClickable(onClick = onToggleShuffle)
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -818,12 +1067,12 @@ private fun RightRail(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "${strings.queueLabel.uppercase()}  ${state.playbackQueue.size}",
-                        color = Moss,
-                        style = MaterialTheme.typography.labelSmall,
+                        "${strings.queueLabel} · ${state.playbackQueue.size}",
+                        color = if (state.shuffleEnabled) Wd2.Accent else TextDim,
+                        style = MaterialTheme.typography.labelLarge,
                     )
                     Text(
-                        if (state.shuffleEnabled) strings.shuffleOn else strings.shuffleOff,
+                        if (state.shuffleEnabled) "${strings.shuffleLabel}: ${strings.shuffleOn}" else "${strings.shuffleLabel}: ${strings.shuffleOff}",
                         color = TextPrimary,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -831,26 +1080,27 @@ private fun RightRail(
                 Icon(
                     Icons.Rounded.Shuffle,
                     contentDescription = strings.shuffleLabel,
-                    tint = if (state.shuffleEnabled) Moss else Muted,
+                    tint = if (state.shuffleEnabled) Wd2.Accent else Muted,
+                    modifier = Modifier.size(18.dp),
                 )
             }
             Text(
                 state.parserStatus,
                 color = Muted,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.bodySmall,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 state.ocrStatus,
-                color = Muted.copy(alpha = 0.85f),
-                style = MaterialTheme.typography.labelSmall,
+                color = Muted.copy(alpha = 0.8f),
+                style = MaterialTheme.typography.bodySmall,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(strings.sectionUpNext, color = Muted, style = MaterialTheme.typography.labelMedium)
+            Text(strings.sectionUpNext, color = TextDim, style = MaterialTheme.typography.labelLarge)
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                state.playbackQueue.take(if (metrics.compact) 3 else 5).forEach { track -> QueueRow(track, onPlayTrack, compact = true) }
+                state.playbackQueue.take(if (metrics.compact) 3 else 6).forEach { track -> QueueRow(track, onPlayTrack, compact = true) }
             }
         }
     }
@@ -868,31 +1118,39 @@ private fun BottomPlayer(
     onSetPlaybackVolume: (Float) -> Unit,
     onToggleShuffle: () -> Unit,
 ) {
-    // Full-width ctOS player dock — white frame, red live bar, square controls
+    // Player dock — raised surface with a hairline top edge instead of a full white frame.
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, Wd2.Line)
+            .clip(RoundedCornerShape(Wd2Radius.lg))
             .background(Wd2.BgElevated),
     ) {
-        // Top red status strip
+        // Status strip: a small live dot plus volume, no full-width red bar.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(if (state.isPlaying) Wd2.Accent else Wd2.PanelRaised)
-                .padding(horizontal = 12.dp, vertical = 3.dp),
+                .background(Wd2.Panel)
+                .padding(horizontal = 16.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                if (state.isPlaying) "▶ DECK // LIVE" else "■ DECK // STANDBY",
-                color = TextPrimary,
-                style = MaterialTheme.typography.labelSmall,
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(if (state.isPlaying) Wd2.Accent else Muted),
+                )
+                Text(
+                    if (state.isPlaying) "Воспроизведение" else "Остановлено",
+                    color = if (state.isPlaying) TextPrimary else Muted,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
             Text(
                 "VOL ${(state.playbackVolume * 100).roundToInt()}%",
-                color = TextPrimary,
-                style = MaterialTheme.typography.labelSmall,
+                color = Muted,
+                style = MaterialTheme.typography.labelLarge,
             )
         }
 
@@ -907,12 +1165,12 @@ private fun BottomPlayer(
                         ArtworkBadge(state.currentTrack?.title?.take(2)?.uppercase() ?: "YN", Wd2.Accent, compact = true)
                         Column(modifier = Modifier.weight(1f)) {
                             Crossfade(state.currentTrack?.title ?: strings.noTrackSelected, label = "bottom-track-title-compact") { title ->
-                                Text(title.uppercase(), color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(title, color = TextPrimary, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             Text(
-                                (state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle).uppercase(),
-                                color = Muted,
-                                style = MaterialTheme.typography.labelSmall,
+                                state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle,
+                                color = TextDim,
+                                style = MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -957,12 +1215,12 @@ private fun BottomPlayer(
                         ArtworkBadge(state.currentTrack?.title?.take(2)?.uppercase() ?: "YN", Wd2.Accent)
                         Column {
                             Crossfade(state.currentTrack?.title ?: strings.noTrackSelected, label = "bottom-track-title") { title ->
-                                Text(title.uppercase(), color = TextPrimary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(title, color = TextPrimary, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             Text(
-                                (state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle).uppercase(),
-                                color = Muted,
-                                style = MaterialTheme.typography.labelSmall,
+                                state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle,
+                                color = TextDim,
+                                style = MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -995,16 +1253,35 @@ private fun BottomPlayer(
 }
 
 @Composable
-private fun LanguageSwitcher(language: AppLanguage, strings: DesktopStrings, onLanguageChange: (AppLanguage) -> Unit) {
-    Surface(shape = RoundedCornerShape(0.dp), color = PanelRaised) {
-        Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Language, contentDescription = null, tint = Gold)
-                Text(strings.languageLabel, color = TextPrimary, style = MaterialTheme.typography.bodyMedium)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                LanguageButton("RU", language == AppLanguage.RU) { onLanguageChange(AppLanguage.RU) }
-                LanguageButton("EN", language == AppLanguage.EN) { onLanguageChange(AppLanguage.EN) }
+private fun LanguageSwitcher(
+    language: AppLanguage,
+    strings: DesktopStrings,
+    collapsed: Boolean = false,
+    onLanguageChange: (AppLanguage) -> Unit,
+) {
+    Surface(shape = RoundedCornerShape(Wd2Radius.md), color = PanelRaised) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(if (collapsed) 6.dp else 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (collapsed) {
+                Icon(
+                    Icons.Rounded.Language,
+                    contentDescription = strings.languageLabel,
+                    tint = TextDim,
+                    modifier = Modifier.size(16.dp).align(Alignment.CenterHorizontally),
+                )
+                LanguageButton("R", language == AppLanguage.RU) { onLanguageChange(AppLanguage.RU) }
+                LanguageButton("E", language == AppLanguage.EN) { onLanguageChange(AppLanguage.EN) }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Language, contentDescription = null, tint = TextDim, modifier = Modifier.size(16.dp))
+                    Text(strings.languageLabel, color = TextDim, style = MaterialTheme.typography.bodySmall)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LanguageButton("RU", language == AppLanguage.RU) { onLanguageChange(AppLanguage.RU) }
+                    LanguageButton("EN", language == AppLanguage.EN) { onLanguageChange(AppLanguage.EN) }
+                }
             }
         }
     }
@@ -1014,12 +1291,19 @@ private fun LanguageSwitcher(language: AppLanguage, strings: DesktopStrings, onL
 private fun LanguageButton(label: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Wd2Radius.sm))
             .background(if (selected) Wd2.Accent else Wd2.Bg)
-            .border(1.dp, if (selected) Wd2.Accent else Wd2.Line)
             .pressClickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = TextPrimary, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        Text(
+            label,
+            color = if (selected) Wd2.AccentText else TextDim,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
@@ -1046,9 +1330,9 @@ private fun PlaylistColumn(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(0.dp))
+                    .clip(RoundedCornerShape(Wd2Radius.md))
                     .background(if (playlist.id == selectedPlaylistId) parseTone(playlist.tone).copy(alpha = 0.12f) else Panel)
-                    .border(1.dp, if (playlist.id == selectedPlaylistId) parseTone(playlist.tone).copy(alpha = 0.34f) else Outline, RoundedCornerShape(0.dp))
+                    .border(1.dp, if (playlist.id == selectedPlaylistId) parseTone(playlist.tone).copy(alpha = 0.34f) else Outline, RoundedCornerShape(Wd2Radius.md))
                     .pressClickable { onSelectPlaylist(playlist.id) }
                     .padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1061,9 +1345,9 @@ private fun PlaylistColumn(
                 if (playlist.id != "library-all") {
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(0.dp))
+                            .clip(RoundedCornerShape(Wd2Radius.md))
                             .background(PanelRaised)
-                            .border(1.dp, Outline, RoundedCornerShape(0.dp))
+                            .border(1.dp, Outline, RoundedCornerShape(Wd2Radius.md))
                             .pressClickable { onEditPlaylist(playlist) }
                             .padding(10.dp),
                     ) {
@@ -1077,13 +1361,13 @@ private fun PlaylistColumn(
 
 @Composable
 private fun PlaylistCard(playlist: PlaylistRecord, onClick: () -> Unit) {
-    Surface(modifier = Modifier.width(220.dp).pressClickable(onClick = onClick), shape = RoundedCornerShape(0.dp), color = Panel) {
+    Surface(modifier = Modifier.width(220.dp).pressClickable(onClick = onClick), shape = RoundedCornerShape(Wd2Radius.md), color = Panel) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(180.dp)
-                    .clip(RoundedCornerShape(0.dp))
+                    .clip(RoundedCornerShape(Wd2Radius.md))
                     .background(Brush.linearGradient(listOf(parseTone(playlist.tone), Color(0xFF232625)))),
             ) {
                 Text(
@@ -1114,7 +1398,7 @@ private fun PlaylistEditorDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            shape = RoundedCornerShape(0.dp),
+            shape = RoundedCornerShape(Wd2Radius.md),
             color = Panel,
             modifier = Modifier.widthIn(max = 520.dp),
         ) {
@@ -1208,30 +1492,22 @@ private fun TrackList(
             ) {
                 itemsIndexed(tracks, key = { _, track -> track.id }) { index, track ->
                     val selected = track.id in selectedTrackIds
+                    val rowInteraction = remember { MutableInteractionSource() }
+                    val rowHovered by rowInteraction.collectIsHoveredAsState()
                     BoxWithConstraints(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 48.dp)
-                            .clip(RoundedCornerShape(0.dp))
+                            .clip(RoundedCornerShape(Wd2Radius.md))
                             .background(
                                 when {
-                                    selected -> Gold.copy(alpha = 0.08f)
-                                    track.id == currentTrackId -> Moss.copy(alpha = 0.07f)
+                                    selected -> Gold.copy(alpha = 0.10f)
+                                    track.id == currentTrackId -> Moss.copy(alpha = 0.06f)
+                                    rowHovered -> Wd2.PanelHover
                                     else -> Color.Transparent
                                 },
                             )
-                            // Quiet selection hairline instead of full border chrome
-                            .then(
-                                if (track.id == currentTrackId || selected) {
-                                    Modifier.border(
-                                        width = 0.dp,
-                                        color = Color.Transparent,
-                                        shape = RoundedCornerShape(0.dp),
-                                    )
-                                } else {
-                                    Modifier
-                                },
-                            )
+                            .hoverable(interactionSource = rowInteraction)
                             .pressClickable {
                                 if (selectionMode) {
                                     selectedTrackIds = if (selected) selectedTrackIds - track.id else selectedTrackIds + track.id
@@ -1316,7 +1592,7 @@ private fun BulkSelectionBar(
     onApply: (TrackBulkActionSpec) -> Unit,
     onClear: () -> Unit,
 ) {
-    Surface(shape = RoundedCornerShape(0.dp), color = PanelRaised) {
+    Surface(shape = RoundedCornerShape(Wd2Radius.md), color = PanelRaised) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1336,9 +1612,9 @@ private fun BulkSelectionBar(
 private fun BulkActionChip(action: TrackBulkActionSpec, onClick: () -> Unit) {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(0.dp))
+            .clip(RoundedCornerShape(Wd2Radius.md))
             .background(action.accent.copy(alpha = 0.12f))
-            .border(1.dp, action.accent.copy(alpha = 0.32f), RoundedCornerShape(0.dp))
+            .border(1.dp, action.accent.copy(alpha = 0.32f), RoundedCornerShape(Wd2Radius.md))
             .pressClickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1373,9 +1649,9 @@ private fun SelectionToggleButton(selected: Boolean, onClick: () -> Unit) {
 private fun RowActionChip(trackId: String, rowActionLabel: String, onRowAction: (String) -> Unit) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(0.dp))
+            .clip(RoundedCornerShape(Wd2Radius.md))
             .background(PanelRaised)
-            .border(1.dp, Outline, RoundedCornerShape(0.dp))
+            .border(1.dp, Outline, RoundedCornerShape(Wd2Radius.md))
             .pressClickable(pressedScale = 0.96f) { onRowAction(trackId) }
             .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
@@ -1405,9 +1681,9 @@ private fun ParserResults(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = if (compactCard) 108.dp else 94.dp)
-                        .clip(RoundedCornerShape(0.dp))
+                        .clip(RoundedCornerShape(Wd2Radius.md))
                         .background(Panel)
-                        .border(1.dp, Outline, RoundedCornerShape(0.dp))
+                        .border(1.dp, Outline, RoundedCornerShape(Wd2Radius.md))
                         .padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -1452,7 +1728,7 @@ private fun ImportMatches(matches: List<MatchedTrackCandidate>, strings: Desktop
                 ScreenshotImportItemStatus.NOT_FOUND -> Muted
                 ScreenshotImportItemStatus.RECOGNIZED -> Sky
             }
-            Surface(shape = RoundedCornerShape(0.dp), color = Panel) {
+            Surface(shape = RoundedCornerShape(Wd2Radius.md), color = Panel) {
                 Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(item.recognized.rawText, color = TextPrimary, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(item.message ?: strings.importReadyMessage, color = accent, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -1467,26 +1743,35 @@ private fun ImportMatches(matches: List<MatchedTrackCandidate>, strings: Desktop
 
 @Composable
 private fun QueueRow(track: TrackRecord, onPlayTrack: (String) -> Unit, compact: Boolean = false) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = if (compact) 42.dp else 56.dp)
-            .clip(RoundedCornerShape(0.dp))
-            .background(if (compact) Color.Transparent else PanelRaised)
+            .clip(RoundedCornerShape(Wd2Radius.md))
+            .background(
+                when {
+                    hovered -> Wd2.PanelHover
+                    compact -> Color.Transparent
+                    else -> PanelRaised
+                },
+            )
+            .hoverable(interactionSource = interactionSource)
             .pressClickable { onPlayTrack(track.id) }
-            .padding(horizontal = if (compact) 6.dp else 10.dp, vertical = if (compact) 6.dp else 10.dp),
+            .padding(horizontal = if (compact) 8.dp else 10.dp, vertical = if (compact) 6.dp else 10.dp),
         horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             track.title.take(1).uppercase(),
-            color = Moss,
+            color = if (hovered) Wd2.Accent else Moss,
             style = MaterialTheme.typography.labelMedium,
-            modifier = Modifier.width(16.dp),
+            modifier = Modifier.width(14.dp),
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(track.title, color = TextPrimary, style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(track.artist, color = Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(track.artist, color = TextDim, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -1497,9 +1782,9 @@ private fun TextInput(value: String, placeholder: String, modifier: Modifier = M
         value = value,
         onValueChange = onValueChange,
         modifier = modifier
-            .clip(RoundedCornerShape(0.dp))
+            .clip(RoundedCornerShape(Wd2Radius.md))
             .background(PanelRaised)
-            .border(1.dp, Outline, RoundedCornerShape(0.dp))
+            .border(1.dp, Outline, RoundedCornerShape(Wd2Radius.md))
             .padding(horizontal = 12.dp, vertical = 10.dp),
         singleLine = true,
         textStyle = MaterialTheme.typography.bodyMedium.copy(color = TextPrimary),
@@ -1516,16 +1801,16 @@ private fun TextInput(value: String, placeholder: String, modifier: Modifier = M
 @Composable
 private fun LabeledField(label: String, value: String, placeholder: String, onChange: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(label.uppercase(), color = Gold, style = MaterialTheme.typography.labelMedium)
+        Text(label, color = TextDim, style = MaterialTheme.typography.labelLarge)
         TextInput(value, placeholder, Modifier.fillMaxWidth(), onChange)
     }
 }
 
 @Composable
 private fun StatusCard(title: String, body: String) {
-    Surface(shape = RoundedCornerShape(0.dp), color = Panel) {
+    Surface(shape = RoundedCornerShape(Wd2Radius.md), color = Panel) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(title.uppercase(), color = Gold, style = MaterialTheme.typography.labelMedium)
+            Text(title, color = TextDim, style = MaterialTheme.typography.labelLarge)
             Text(body, color = TextPrimary, style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis)
         }
     }
@@ -1537,16 +1822,16 @@ private fun CompactNowPlayingCard(title: String, subtitle: String) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 4.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        Text(title, color = TextPrimary, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Text(subtitle, color = Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(title, color = TextPrimary, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(subtitle, color = TextDim, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable
 private fun EmptyState(title: String) {
-    Surface(shape = RoundedCornerShape(0.dp), color = Panel) {
+    Surface(shape = RoundedCornerShape(Wd2Radius.md), color = Panel) {
         Box(Modifier.fillMaxWidth().padding(18.dp), contentAlignment = Alignment.CenterStart) {
             Text(title, color = Muted, style = MaterialTheme.typography.bodyLarge)
         }
@@ -1559,43 +1844,89 @@ private fun SectionTitle(title: String) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Box(Modifier.width(12.dp).height(12.dp).background(Wd2.Accent)) {}
-        Text(title.uppercase(), color = TextPrimary, style = MaterialTheme.typography.titleLarge)
+        Box(Modifier.width(3.dp).height(16.dp).clip(RoundedCornerShape(Wd2Radius.pill)).background(Wd2.Accent))
+        Text(title, color = TextPrimary, style = MaterialTheme.typography.titleLarge)
     }
 }
 
 @Composable
-private fun NavPill(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, selected: Boolean, onClick: () -> Unit) {
+private fun NavPill(
+    label: String,
+    index: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    collapsed: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
+    val tint by animateColor(selected = selected)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(44.dp)
-            .clip(RoundedCornerShape(0.dp))
-            .background(Color.Transparent)
-            .interactiveClickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+            .height(40.dp)
+            .clip(RoundedCornerShape(Wd2Radius.md))
+            .background(if (!selected && hovered) Wd2.PanelHover else Color.Transparent)
+            .hoverable(interactionSource = interactionSource)
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+            .padding(horizontal = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val tint by animateColor(selected = selected)
-        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(20.dp))
-        Text(label, color = if (selected) TextPrimary else Muted, style = MaterialTheme.typography.bodyMedium)
+        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(19.dp))
+        if (!collapsed) {
+            Text(
+                label,
+                color = if (selected) TextPrimary else TextDim,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            // Quiet terminal index — keeps the ctOS flavour without shouting it.
+            Text(
+                index,
+                color = if (selected) Wd2.Accent.copy(alpha = 0.85f) else Muted.copy(alpha = 0.55f),
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
     }
 }
 
 @Composable
 private fun AccentAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, color: Color, onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
+    val isPrimary = color == Gold || color == Wd2.Accent
+
     Row(
         modifier = Modifier
-            .background(if (color == Gold || color == Wd2.Accent) Wd2.Accent else color.copy(alpha = 0.2f))
-            .border(1.dp, Wd2.Line)
-            .pressClickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .clip(RoundedCornerShape(Wd2Radius.pill))
+            .background(
+                when {
+                    isPrimary -> if (hovered) Wd2.Accent else Wd2.AccentDim
+                    hovered -> Wd2.PanelHover
+                    else -> PanelRaised
+                },
+            )
+            .hoverable(interactionSource = interactionSource)
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = label, tint = TextPrimary, modifier = Modifier.size(18.dp))
-        Text(label.uppercase(), color = TextPrimary, style = MaterialTheme.typography.labelMedium)
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = if (isPrimary) Wd2.AccentText else TextDim,
+            modifier = Modifier.size(17.dp),
+        )
+        Text(
+            label,
+            color = if (isPrimary) Wd2.AccentText else TextPrimary,
+            style = MaterialTheme.typography.titleMedium,
+        )
     }
 }
 
@@ -1603,9 +1934,9 @@ private fun AccentAction(label: String, icon: androidx.compose.ui.graphics.vecto
 private fun SecondaryAction(label: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(0.dp))
+            .clip(RoundedCornerShape(Wd2Radius.md))
             .background(PanelRaised)
-            .border(1.dp, Outline, RoundedCornerShape(0.dp))
+            .border(1.dp, Outline, RoundedCornerShape(Wd2Radius.md))
             .pressClickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp),
     ) {
@@ -1666,7 +1997,7 @@ private fun VolumeControl(
                 properties = PopupProperties(focusable = false),
             ) {
                 Surface(
-                    shape = RoundedCornerShape(0.dp),
+                    shape = RoundedCornerShape(Wd2Radius.md),
                     color = PanelRaised.copy(alpha = panelAlpha),
                     modifier = Modifier
                         .graphicsLayer {
@@ -1729,9 +2060,9 @@ private fun PillButton(label: String, color: Color, onClick: () -> Unit) {
 private fun AccentChip(label: String, background: Color, onClick: (() -> Unit)? = null) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(0.dp))
+            .clip(RoundedCornerShape(Wd2Radius.md))
             .background(background)
-            .border(1.dp, Outline, RoundedCornerShape(0.dp))
+            .border(1.dp, Outline, RoundedCornerShape(Wd2Radius.md))
             .pressClickable(enabled = onClick != null) { onClick?.invoke() }
             .padding(horizontal = 14.dp, vertical = 10.dp),
     ) {
@@ -1745,7 +2076,7 @@ private fun MiniPanel(title: String, value: String, icon: androidx.compose.ui.gr
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(0.dp))
+            .clip(RoundedCornerShape(Wd2Radius.md))
             .background(PanelRaised)
             .pressClickable(enabled = onClick != null) { onClick?.invoke() }
             .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -1810,29 +2141,41 @@ private fun RoundAction(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     primary: Boolean = false,
+    enabled: Boolean = true,
+    size: androidx.compose.ui.unit.Dp = if (primary) 48.dp else 40.dp,
+    iconSize: androidx.compose.ui.unit.Dp = if (primary) 22.dp else 19.dp,
+    /** Quiet chrome buttons (history, collapse) that should not compete with the accent. */
+    subdued: Boolean = false,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val hovered by interactionSource.collectIsHoveredAsState()
     val scale by animateFloatAsState(
         targetValue = when {
-            pressed -> 0.94f
-            hovered -> 1.02f
+            !enabled -> 1f
+            pressed -> 0.93f
+            hovered -> 1.05f
             else -> 1f
         },
-        animationSpec = tween(100),
+        animationSpec = tween(120, easing = androidx.compose.animation.core.FastOutSlowInEasing),
         label = "player-button-scale",
     )
 
     val bg = when {
-        primary && (active || true) -> if (active) Wd2.Accent else Wd2.AccentDim
+        primary && active -> Wd2.Accent
+        primary -> Wd2.AccentDim
         active -> Wd2.AccentSoft
-        hovered -> PanelRaised
-        else -> Wd2.Bg
+        hovered && enabled -> Wd2.PanelHover
+        else -> Color.Transparent
     }
-    val borderCol = when {
-        primary || active || hovered -> Wd2.Accent
-        else -> Wd2.Line
+    val shape = RoundedCornerShape(if (primary) Wd2Radius.pill else Wd2Radius.md)
+    val contentColor = when {
+        !enabled -> Muted.copy(alpha = 0.4f)
+        primary -> Wd2.AccentText
+        active -> Wd2.Accent
+        hovered -> TextPrimary
+        subdued -> TextDim
+        else -> TextPrimary
     }
 
     Box(
@@ -1840,91 +2183,56 @@ private fun RoundAction(
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
+                alpha = if (enabled) 1f else 0.45f
             }
-            .size(if (primary) 48.dp else 42.dp)
+            .size(size)
+            .clip(shape)
             .background(bg)
-            .border(1.dp, borderCol)
-            .hoverable(interactionSource = interactionSource)
+            .hoverable(interactionSource = interactionSource, enabled = enabled)
             .clickable(
+                enabled = enabled,
                 interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick,
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = when {
-                primary -> TextPrimary
-                active || hovered -> Wd2.Accent
-                else -> TextPrimary
-            },
-            modifier = Modifier.size(20.dp),
-        )
+        Icon(icon, contentDescription = null, tint = contentColor, modifier = Modifier.size(iconSize))
     }
 }
 
-/** Full-screen pixel grid + scanlines + static interference (WD2 HUD). */
+/**
+ * Static ctOS atmosphere: a faint grid and a soft red glow in two corners.
+ *
+ * Previously this was an animated CRT layer (moving interference band, 48 redrawn speckles,
+ * scanlines every 3px) on a 900ms loop. It repainted the entire window forever — including
+ * while paused — and its high-frequency noise was a big part of the harsh look. The texture
+ * stays, the churn does not.
+ */
 @Composable
 private fun CrtAtmosphere() {
-    val transition = rememberInfiniteTransition(label = "crt-static")
-    val phase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(animation = tween(900)),
-        label = "crt-static-phase",
-    )
     Canvas(modifier = Modifier.fillMaxSize()) {
-        // Pixel grid
-        val step = 6f
+        val gridStep = 28f
         var x = 0f
         while (x < size.width) {
             drawRect(Wd2.LineFaint, Offset(x, 0f), Size(1f, size.height))
-            x += step
+            x += gridStep
         }
         var y = 0f
         while (y < size.height) {
             drawRect(Wd2.LineFaint, Offset(0f, y), Size(size.width, 1f))
-            y += step
+            y += gridStep
         }
-        // Horizontal scanlines
-        y = 0f
-        while (y < size.height) {
-            drawRect(Color(0x0AFFFFFF), Offset(0f, y), Size(size.width, 1f))
-            y += 3f
-        }
-        // Red vignette corners
-        drawCircle(
-            brush = Brush.radialGradient(listOf(Wd2.Accent.copy(alpha = 0.07f), Color.Transparent)),
-            radius = size.minDimension * 0.55f,
-            center = Offset(size.width * 0.08f, size.height * 0.12f),
-        )
         drawCircle(
             brush = Brush.radialGradient(listOf(Wd2.Accent.copy(alpha = 0.05f), Color.Transparent)),
-            radius = size.minDimension * 0.5f,
-            center = Offset(size.width * 0.92f, size.height * 0.88f),
+            radius = size.minDimension * 0.6f,
+            center = Offset(size.width * 0.06f, size.height * 0.08f),
         )
-        // Moving interference band
-        val bandY = (size.height * phase) % size.height
-        drawRect(
-            color = Wd2.Accent.copy(alpha = 0.04f),
-            topLeft = Offset(0f, bandY),
-            size = Size(size.width, 18f),
+        drawCircle(
+            brush = Brush.radialGradient(listOf(Wd2.Accent.copy(alpha = 0.035f), Color.Transparent)),
+            radius = size.minDimension * 0.55f,
+            center = Offset(size.width * 0.94f, size.height * 0.92f),
         )
-        // Speckle noise (cheap pseudo-random from phase)
-        val seed = (phase * 9973).toInt()
-        var i = 0
-        while (i < 48) {
-            val nx = ((seed * (i + 3) * 17) % size.width.toInt()).toFloat().coerceAtLeast(0f)
-            val ny = ((seed * (i + 7) * 31) % size.height.toInt()).toFloat().coerceAtLeast(0f)
-            drawRect(
-                color = if (i % 3 == 0) Wd2.Accent.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.06f),
-                topLeft = Offset(nx, ny),
-                size = Size(2f, 2f),
-            )
-            i++
-        }
     }
 }
 
@@ -1987,6 +2295,14 @@ private fun Modifier.interactiveClickable(
         )
 }
 
+/**
+ * Player visualizer.
+ *
+ * Spectrum frames arrive from the backend at roughly 30 fps. Instead of drawing those samples
+ * as stepped blocks, the canvas runs on the display's own frame clock and eases a smoothed
+ * band array toward the latest target, so the motion is continuous no matter how coarse the
+ * incoming data is. Idle state is honest: flat line, no fake motion.
+ */
 @Composable
 private fun PlaybackVisualizer(
     state: PlaybackVisualizerState,
@@ -1994,97 +2310,148 @@ private fun PlaybackVisualizer(
     accent: Color,
     dense: Boolean,
 ) {
-    val bandCount = when {
-        state.bands.isNotEmpty() -> state.bands.size
-        dense -> 32
-        else -> 24
-    }
-    // Always-running phase so the visualizer never freezes (idle or live).
-    val transition = rememberInfiniteTransition(label = "viz-phase")
-    val phase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(animation = tween(1600)),
-        label = "viz-phase-anim",
-    )
+    val bandCount = VISUALIZER_BANDS
+    val latest = rememberUpdatedState(state)
+    val rendered = remember { FloatArray(bandCount) }
+    val peaks = remember { FloatArray(bandCount) }
+    val frameTick = remember { mutableStateOf(0L) }
+    val elapsed = remember { mutableStateOf(0f) }
 
-    // Prefer real spectrum when active; otherwise idle waves driven by phase.
-    val bands: List<Float> = if (state.active && state.bands.any { it > 0.02f }) {
-        state.bands
-    } else {
-        List(bandCount) { index ->
-            val live = if (state.active && index < state.bands.size) state.bands[index] else 0f
-            maxOf(live, idleValue(index, phase, dense))
+    LaunchedEffect(Unit) {
+        var lastFrame = 0L
+        while (true) {
+            withFrameNanos { now ->
+                val dtSeconds = if (lastFrame == 0L) {
+                    DEFAULT_FRAME_SECONDS
+                } else {
+                    ((now - lastFrame) / 1_000_000_000.0).toFloat().coerceIn(0.002f, 0.05f)
+                }
+                lastFrame = now
+
+                val snapshot = latest.value
+                var moving = false
+                for (index in 0 until bandCount) {
+                    val target = snapshot.bands.getOrNull(index)?.coerceIn(0f, 1f) ?: 0f
+                    val current = rendered[index]
+                    // Fast attack, slower release — the classic meter feel.
+                    val rate = if (target > current) {
+                        1f - (1f - ATTACK_PER_FRAME).pow(dtSeconds / DEFAULT_FRAME_SECONDS)
+                    } else {
+                        1f - (1f - RELEASE_PER_FRAME).pow(dtSeconds / DEFAULT_FRAME_SECONDS)
+                    }
+                    val next = current + (target - current) * rate
+                    rendered[index] = next
+                    peaks[index] = maxOf(peaks[index] - dtSeconds * PEAK_FALL_PER_SECOND, next)
+                    if (kotlin.math.abs(next - target) > 0.002f || next > 0.002f) moving = true
+                }
+
+                if (snapshot.active) elapsed.value = (elapsed.value + dtSeconds) % 1000f
+                // Only invalidate when something is actually changing, so an idle player costs nothing.
+                if (moving || snapshot.active) frameTick.value = now
+            }
         }
     }
+
+    val tick = frameTick.value
+    val phase = elapsed.value
+    val live = state.spectrumLive
+    val active = state.active
 
     Canvas(
-        modifier = modifier
-            .background(Wd2.BgElevated)
-            .border(1.dp, Wd2.LineDim),
+        modifier = modifier.clip(RoundedCornerShape(Wd2Radius.md)),
     ) {
-        // CRT scanline veil
-        val scanStep = 3f
-        var sy = 0f
-        while (sy < size.height) {
-            drawRect(
-                color = Color(0x08FFFFFF),
-                topLeft = Offset(0f, sy),
-                size = Size(size.width, 1f),
-            )
-            sy += scanStep
-        }
+        // Suppress the unused-value warning while keeping the frame dependency explicit.
+        if (tick < 0L) return@Canvas
 
-        val count = bands.size.coerceAtLeast(1)
-        val gap = if (dense) 2.5f else 3.5f
-        val barWidth = ((size.width - gap * (count - 1)) / count).coerceAtLeast(2f)
-        val segmentH = 3f
-        val segmentGap = 1.4f
+        val width = size.width
+        val height = size.height
+        val baseline = height - 1f
 
-        bands.forEachIndexed { index, value ->
-            val normalized = value.coerceIn(0f, 1f)
-            // Breathing motion even on flat spectrum
-            val breathe = (0.85f + 0.15f * kotlin.math.sin((phase * 6.28318f) + index * 0.4f)).toFloat()
-            val n = (normalized * breathe).coerceIn(0.06f, 1f)
-            val barHeight = size.height * (0.1f + n * 0.9f)
-            val left = index * (barWidth + gap)
-            val bottom = size.height
-            var y = bottom
-            var seg = 0
-            while (bottom - y < barHeight) {
-                val top = (y - segmentH).coerceAtLeast(bottom - barHeight)
-                val level = ((bottom - top) / size.height).coerceIn(0f, 1f)
-                val col = when {
-                    level > 0.72f -> Wd2.Accent.copy(alpha = 0.55f + n * 0.4f)
-                    level > 0.4f -> Wd2.Ok.copy(alpha = 0.45f + n * 0.4f)
-                    else -> Wd2.Text.copy(alpha = 0.25f + n * 0.35f)
-                }
-                drawRect(
-                    color = col,
-                    topLeft = Offset(left, top),
-                    size = Size(barWidth, (y - top).coerceAtLeast(1f)),
-                )
-                y = top - segmentGap
-                seg++
-                if (seg > 80) break
+        // Quiet reference line — reads as a meter at rest rather than a dead box.
+        drawLine(
+            color = Wd2.LineDim,
+            start = Offset(0f, baseline),
+            end = Offset(width, baseline),
+            strokeWidth = 1f,
+        )
+
+        if (rendered.isEmpty()) return@Canvas
+
+        val step = width / (bandCount - 1).coerceAtLeast(1)
+        val usableHeight = height * 0.92f
+        val points = List(bandCount) { index ->
+            // A slow sine keeps the shape alive while the track plays but the codec reports flat.
+            val breathe = if (active && !live) {
+                (0.9f + 0.1f * kotlin.math.sin(phase * 3.1f + index * 0.35f))
+            } else {
+                1f
             }
-            // Top cap
-            drawRect(
-                color = Wd2.Accent.copy(alpha = 0.85f),
-                topLeft = Offset(left, bottom - barHeight),
-                size = Size(barWidth, 1.5f),
-            )
+            val value = (rendered[index] * breathe).coerceIn(0f, 1f)
+            Offset(index * step, baseline - value * usableHeight)
         }
 
-        // Corner markers (KAIRSEC L-brackets)
-        val c = 8f
-        val line = Wd2.Accent.copy(alpha = 0.7f)
-        // TL
-        drawRect(line, Offset(0f, 0f), Size(c, 1.5f))
-        drawRect(line, Offset(0f, 0f), Size(1.5f, c))
-        // BR
-        drawRect(line, Offset(size.width - c, size.height - 1.5f), Size(c, 1.5f))
-        drawRect(line, Offset(size.width - 1.5f, size.height - c), Size(1.5f, c))
+        val area = Path().apply {
+            moveTo(0f, baseline)
+            lineTo(points.first().x, points.first().y)
+            for (index in 1 until points.size) {
+                val previous = points[index - 1]
+                val current = points[index]
+                val midX = (previous.x + current.x) / 2f
+                cubicTo(midX, previous.y, midX, current.y, current.x, current.y)
+            }
+            lineTo(width, baseline)
+            close()
+        }
+        drawPath(
+            path = area,
+            brush = Brush.verticalGradient(
+                colors = listOf(
+                    accent.copy(alpha = if (active) 0.85f else 0.22f),
+                    accent.copy(alpha = if (active) 0.28f else 0.08f),
+                    Color.Transparent,
+                ),
+                startY = 0f,
+                endY = height,
+            ),
+        )
+
+        val outline = Path().apply {
+            moveTo(points.first().x, points.first().y)
+            for (index in 1 until points.size) {
+                val previous = points[index - 1]
+                val current = points[index]
+                val midX = (previous.x + current.x) / 2f
+                cubicTo(midX, previous.y, midX, current.y, current.x, current.y)
+            }
+        }
+        drawPath(
+            path = outline,
+            color = accent.copy(alpha = if (active) 0.95f else 0.3f),
+            style = Stroke(width = 1.6f),
+        )
+
+        // Peak-hold ticks, drawn only when there is real movement to track.
+        if (active && dense) {
+            peaks.forEachIndexed { index, peak ->
+                if (peak <= 0.03f) return@forEachIndexed
+                val x = index * step
+                drawLine(
+                    color = Color.White.copy(alpha = 0.5f),
+                    start = Offset(x, baseline - peak * usableHeight),
+                    end = Offset(x, (baseline - peak * usableHeight + 3f).coerceAtMost(baseline)),
+                    strokeWidth = 1.5f,
+                )
+            }
+        }
+
+        // Honest label: the bars are generated, not decoded, when the codec reports no spectrum.
+        if (active && !live) {
+            drawRect(
+                color = accent.copy(alpha = 0.55f),
+                topLeft = Offset(width - 5f, height - 5f),
+                size = Size(3f, 3f),
+            )
+        }
     }
 }
 
@@ -2235,12 +2602,6 @@ private fun volumeIconFor(volume: Float) = when {
 
 internal fun timelineKeyboardStepMs(durationMs: Long): Long =
     (durationMs / 24L).coerceIn(3_000L, 12_000L)
-
-private fun idleValue(index: Int, phase: Float, dense: Boolean): Float {
-    val seed = if (dense) 0.22f else 0.16f
-    val wave = kotlin.math.sin((phase * 6.28318f) + index * 0.45f)
-    return (seed + (wave + 1f) * 0.08f).coerceIn(0f, 0.35f)
-}
 
 @Composable
 private fun animateColor(selected: Boolean): androidx.compose.runtime.State<Color> {
