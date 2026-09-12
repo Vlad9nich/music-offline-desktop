@@ -34,12 +34,18 @@ data class PlaybackVisualizerState(
     val bands: List<Float> = List(24) { 0f },
     val intensity: Float = 0f,
     val active: Boolean = false,
+    /**
+     * True when [bands] come from the decoder's real spectrum. False means the codec reports a
+     * flat spectrum and the bars are a generated fallback, which the UI surfaces honestly.
+     */
+    val spectrumLive: Boolean = false,
 ) {
     companion object {
-        fun idle(size: Int = 24): PlaybackVisualizerState = PlaybackVisualizerState(
+        fun idle(size: Int = 32): PlaybackVisualizerState = PlaybackVisualizerState(
             bands = List(size) { 0f },
             intensity = 0f,
             active = false,
+            spectrumLive = false,
         )
     }
 }

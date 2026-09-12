@@ -37,6 +37,16 @@ interface PlaybackBackend {
     fun playPrevious(onState: (PlaybackSnapshot) -> Unit)
     fun seekTo(positionMs: Long, onState: (PlaybackSnapshot) -> Unit)
     fun setVolume(volume: Float, onState: (PlaybackSnapshot) -> Unit)
+
+    /**
+     * Replaces the play order without interrupting the track that is currently playing.
+     *
+     * Used when shuffle is toggled or the source list changes: the backend keeps the same
+     * audio session and re-anchors on the current track, so the order the UI shows and the
+     * order the player follows can never drift apart.
+     */
+    fun setQueue(queue: List<TrackRecord>, onState: (PlaybackSnapshot) -> Unit)
+
     fun stop()
 }
 
@@ -48,6 +58,11 @@ data class PlaybackSnapshot(
     val positionMs: Long = 0L,
     val durationMs: Long = 0L,
     val volume: Float = 0.72f,
+    /**
+     * Set when the last track of the queue finished or "next" was pressed on the final track.
+     * The controller decides whether to reshuffle, wrap around, or stop.
+     */
+    val queueExhausted: Boolean = false,
 )
 
 interface MusicSource {

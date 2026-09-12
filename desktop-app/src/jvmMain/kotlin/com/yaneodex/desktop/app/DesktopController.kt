@@ -12,6 +12,8 @@ import com.yaneodex.core.model.LibrarySnapshot
 import com.yaneodex.core.model.RemoteTrackCandidate
 import com.yaneodex.core.model.TrackRecord
 import com.yaneodex.core.playback.buildPlaybackQueue
+import com.yaneodex.core.playback.reshufflePlaybackQueue
+import com.yaneodex.core.playback.unshufflePlaybackQueue
 import com.yaneodex.core.state.AppLanguage
 import com.yaneodex.core.state.DemoLibrary
 import com.yaneodex.core.state.DesktopSection
@@ -40,11 +42,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
-import kotlin.math.max
 import kotlin.random.Random
 
 class DesktopController(
-    private val random: Random = Random(42),
+    private val random: Random = Random.Default,
     private val config: DesktopConfig = DesktopConfig.load(),
     private val libraryRepository: LibraryRepository = DesktopLibraryRepository(
         configuredDefaultRoots = listOfNotNull(config.libraryPath?.takeIf { it.isNotBlank() }),
@@ -60,7 +61,17 @@ class DesktopController(
     val state: StateFlow<DesktopUiState> = _state.asStateFlow()
     private var persistJob: Job? = null
 
+    /**
+     * The unshuffled source the current queue was built from. Keeping it means turning shuffle
+     * off can restore the original order instead of shuffling a shuffled list.
+     */
+    private var shuffleOriginal: List<TrackRecord> = emptyList()
+
+    /** Set by state rebuilds, flushed to the backend by [mutate] so UI and player never drift. */
+    private var pendingBackendQueue: List<TrackRecord>? = null
+
     init {
+        shuffleOriginal = _state.value.playbackQueue
         playbackBackend.setVolume(_state.value.playbackVolume, ::syncPlaybackState)
     }
 
@@ -73,25 +84,27 @@ class DesktopController(
     }
 
     fun selectPlaylist(playlistId: String) {
+        var nextQueue: List<TrackRecord> = emptyList()
         mutate { current ->
             val playlist = current.snapshot.playlists.firstOrNull { it.id == playlistId } ?: return@mutate current
-            val queue = playlist.trackIds.mapNotNull { id -> current.snapshot.tracks.firstOrNull { it.id == id } }
+            val source = playlist.trackIds
+                .mapNotNull { id -> current.snapshot.tracks.firstOrNull { it.id == id } }
+                .ifEmpty { current.snapshot.tracks }
+            shuffleOriginal = source
+            nextQueue = buildPlaybackQueue(source, source.firstOrNull()?.id, current.shuffleEnabled, random)
             current.copy(
                 selectedPlaylistId = playlistId,
                 selectedSection = DesktopSection.PLAYLISTS,
-            currentTrackId = queue.firstOrNull()?.id ?: current.currentTrackId,
-            playbackQueue = buildPlaybackQueue(
-                queue.ifEmpty { current.snapshot.tracks },
-                queue.firstOrNull()?.id,
-                current.shuffleEnabled,
-                random,
-            ),
-            visualizer = PlaybackVisualizerState.idle(),
-            playbackPositionMs = 0L,
-            playbackDurationMs = queue.firstOrNull()?.durationMs ?: current.playbackDurationMs,
-            spotlight = spotlightFor(playlist.name, playlist.tone),
-        )
+                currentTrackId = source.firstOrNull()?.id ?: current.currentTrackId,
+                playbackQueue = nextQueue,
+                visualizer = PlaybackVisualizerState.idle(),
+                playbackPositionMs = 0L,
+                playbackDurationMs = source.firstOrNull()?.durationMs ?: current.playbackDurationMs,
+                spotlight = spotlightFor(playlist.name, playlist.tone),
+            )
         }
+        // Keep the player's order identical to what the queue rail shows.
+        if (nextQueue.isNotEmpty()) playbackBackend.setQueue(nextQueue, ::syncPlaybackState)
     }
 
     fun createPlaylist(name: String, artworkHint: String = "") {
@@ -215,9 +228,9 @@ class DesktopController(
                             visualizer = if (shouldStopPlayback) PlaybackVisualizerState.idle() else current.visualizer,
                             playbackPositionMs = if (shouldStopPlayback) 0L else current.playbackPositionMs,
                             libraryStatus = if (normalizedTrackIds.size == 1) {
-                                text(current.language, "РўСЂРµРє СѓРґР°Р»С‘РЅ РёР· Р±РёР±Р»РёРѕС‚РµРєРё.", "Track removed from library.")
+                                text(current.language, "Трек удалён из библиотеки.", "Track removed from library.")
                             } else {
-                                text(current.language, "РўСЂРµРєРё СѓРґР°Р»РµРЅС‹ РёР· Р±РёР±Р»РёРѕС‚РµРєРё.", "Tracks removed from library.")
+                                text(current.language, "Треки удалены из библиотеки.", "Tracks removed from library.")
                             },
                         )
                     }
@@ -226,9 +239,9 @@ class DesktopController(
                     mutate { current ->
                         current.copy(
                             libraryStatus = error.message ?: if (normalizedTrackIds.size == 1) {
-                                text(current.language, "РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ С‚СЂРµРє РёР· Р±РёР±Р»РёРѕС‚РµРєРё.", "Failed to remove track from library.")
+                                text(current.language, "Не удалось удалить трек из библиотеки.", "Failed to remove track from library.")
                             } else {
-                                text(current.language, "РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ С‚СЂРµРєРё РёР· Р±РёР±Р»РёРѕС‚РµРєРё.", "Failed to remove tracks from library.")
+                                text(current.language, "Не удалось удалить треки из библиотеки.", "Failed to remove tracks from library.")
                             },
                         )
                     }
@@ -239,18 +252,15 @@ class DesktopController(
     fun playTrack(trackId: String) {
         var queueSnapshot: List<TrackRecord> = emptyList()
         mutate { current ->
-            val source = when (current.selectedSection) {
-                DesktopSection.PLAYLISTS -> current.selectedPlaylistTracks.ifEmpty { current.snapshot.tracks }
-                DesktopSection.SEARCH -> current.filteredTracks.ifEmpty { current.snapshot.tracks }
-                else -> current.snapshot.tracks
-            }
+            val source = current.queueSource()
+            shuffleOriginal = source
             val queue = buildPlaybackQueue(source, trackId, current.shuffleEnabled, random)
             queueSnapshot = queue
             current.copy(
                 currentTrackId = trackId,
                 playbackQueue = queue,
                 isPlaying = true,
-                visualizer = PlaybackVisualizerState.idle(32).copy(active = true),
+                visualizer = PlaybackVisualizerState.idle(VISUALIZER_BANDS).copy(active = true),
                 playbackPositionMs = 0L,
                 playbackDurationMs = source.firstOrNull { it.id == trackId }?.durationMs ?: 0L,
             )
@@ -263,6 +273,7 @@ class DesktopController(
         var queueSnapshot: List<TrackRecord> = emptyList()
         mutate { current ->
             val source = current.selectedPlaylistTracks.ifEmpty { current.snapshot.tracks }
+            shuffleOriginal = source
             val queue = buildPlaybackQueue(source, source.firstOrNull()?.id, current.shuffleEnabled, random)
             queueSnapshot = queue
             startId = queue.firstOrNull()?.id
@@ -270,7 +281,7 @@ class DesktopController(
                 currentTrackId = startId,
                 playbackQueue = queue,
                 isPlaying = true,
-                visualizer = PlaybackVisualizerState.idle(32).copy(active = true),
+                visualizer = PlaybackVisualizerState.idle(VISUALIZER_BANDS).copy(active = true),
                 playbackPositionMs = 0L,
                 playbackDurationMs = queue.firstOrNull()?.durationMs ?: 0L,
             )
@@ -278,19 +289,26 @@ class DesktopController(
         playbackBackend.playQueue(queueSnapshot, startId, ::syncPlaybackState)
     }
 
+    /**
+     * Toggles shuffle and pushes the new order to the player.
+     *
+     * The order is applied with [PlaybackBackend.setQueue] rather than a fresh `playQueue`, so the
+     * track that is playing keeps playing at the same position — only what comes next changes.
+     */
     fun toggleShuffle() {
+        var nextQueue: List<TrackRecord> = emptyList()
         mutate { current ->
-            val nextShuffle = !current.shuffleEnabled
-            val source = when (current.selectedSection) {
-                DesktopSection.PLAYLISTS -> current.selectedPlaylistTracks.ifEmpty { current.snapshot.tracks }
-                DesktopSection.SEARCH -> current.filteredTracks.ifEmpty { current.snapshot.tracks }
-                else -> current.snapshot.tracks
+            val enabled = !current.shuffleEnabled
+            val source = shuffleOriginal.ifEmpty { current.queueSource() }
+            shuffleOriginal = source
+            nextQueue = if (enabled) {
+                buildPlaybackQueue(source, current.currentTrackId, true, random)
+            } else {
+                unshufflePlaybackQueue(source, current.queueTrack)
             }
-            current.copy(
-                shuffleEnabled = nextShuffle,
-                playbackQueue = buildPlaybackQueue(source, current.currentTrackId, nextShuffle, random),
-            )
+            current.copy(shuffleEnabled = enabled, playbackQueue = nextQueue)
         }
+        if (nextQueue.isNotEmpty()) playbackBackend.setQueue(nextQueue, ::syncPlaybackState)
     }
 
     fun togglePlayPause() {
@@ -319,7 +337,7 @@ class DesktopController(
 
     fun seekPlayback(positionMs: Long) {
         val current = state.value
-        val duration = current.playbackDurationMs.takeIf { it > 0 } ?: current.currentTrack?.durationMs ?: 0L
+        val duration = current.playbackDurationMs.takeIf { it > 0 } ?: current.queueTrack?.durationMs ?: 0L
         mutate(persist = false) {
             it.copy(playbackPositionMs = positionMs.coerceIn(0L, duration.takeIf { total -> total > 0 } ?: positionMs.coerceAtLeast(0L)))
         }
@@ -333,8 +351,16 @@ class DesktopController(
         playbackBackend.setVolume(volume, ::syncPlaybackState)
     }
 
+    /**
+     * Typing no longer yanks the listener out of whatever screen they were on — the query is
+     * just stored, and running the search navigates explicitly.
+     */
     fun updateSearchQuery(query: String) {
-        mutate { it.copy(searchQuery = query, selectedSection = DesktopSection.SEARCH) }
+        mutate { it.copy(searchQuery = query) }
+    }
+
+    fun openSearch() {
+        mutate { it.copy(selectedSection = DesktopSection.SEARCH) }
     }
 
     fun activateTag(tag: String) {
@@ -612,6 +638,12 @@ class DesktopController(
             }
             updated
         }
+        // Any state rebuild that produced a new order is mirrored onto the player right here,
+        // which is what stops the queue rail from ever describing an order the player ignores.
+        pendingBackendQueue?.let { queue ->
+            pendingBackendQueue = null
+            playbackBackend.setQueue(queue, ::syncPlaybackState)
+        }
     }
 
     private fun schedulePersist(@Suppress("UNUSED_PARAMETER") state: DesktopUiState) {
@@ -668,15 +700,20 @@ class DesktopController(
             ?.mapNotNull { id -> snapshot.tracks.firstOrNull { it.id == id } }
             .orEmpty()
         val queueSource = selectedPlaylistTracks.ifEmpty { snapshot.tracks }
+        shuffleOriginal = queueSource
+
+        val rebuiltQueue = buildPlaybackQueue(queueSource, currentTrackId, current.shuffleEnabled, random)
+        // Mirror the rebuilt order onto the player; [mutate] flushes it once the state settles.
+        pendingBackendQueue = rebuiltQueue
 
         return current.copy(
             snapshot = snapshot,
             libraryRoots = roots,
             selectedPlaylistId = selectedPlaylistId,
             currentTrackId = currentTrackId,
-            playbackQueue = buildPlaybackQueue(queueSource, currentTrackId, current.shuffleEnabled, random),
+            playbackQueue = rebuiltQueue,
             isPlaying = current.isPlaying && stillHasCurrentTrack,
-            visualizer = if (current.isPlaying && stillHasCurrentTrack) current.visualizer else PlaybackVisualizerState.idle(current.visualizer.bands.size),
+            visualizer = if (current.isPlaying && stillHasCurrentTrack) current.visualizer else PlaybackVisualizerState.idle(),
             playbackPositionMs = if (currentTrackId == current.currentTrackId && stillHasCurrentTrack) current.playbackPositionMs else 0L,
             playbackDurationMs = snapshot.tracks.firstOrNull { it.id == currentTrackId }?.durationMs ?: current.playbackDurationMs,
             playbackVolume = current.playbackVolume,
@@ -684,17 +721,59 @@ class DesktopController(
     }
 
     private fun syncPlaybackState(snapshot: PlaybackSnapshot) {
+        if (snapshot.queueExhausted) {
+            continueAfterQueueEnd()
+            return
+        }
         mutate(persist = false) { current ->
             current.copy(
                 currentTrackId = snapshot.currentTrackId ?: current.currentTrackId,
                 isPlaying = snapshot.isPlaying,
                 visualizer = mergeVisualizer(current.visualizer, snapshot.visualizer, snapshot.isPlaying),
                 playbackPositionMs = snapshot.positionMs,
-                playbackDurationMs = snapshot.durationMs.takeIf { it > 0 } ?: current.currentTrack?.durationMs ?: current.playbackDurationMs,
+                // Cheap lookup on the (small) queue instead of the lazily built library map,
+                // which used to be rebuilt from scratch on every playback tick.
+                playbackDurationMs = snapshot.durationMs.takeIf { it > 0 }
+                    ?: current.queueTrack?.durationMs
+                    ?: current.playbackDurationMs,
                 playbackVolume = snapshot.volume.coerceIn(0f, 1f),
                 libraryStatus = snapshot.errorMessage ?: current.libraryStatus,
             )
         }
+    }
+
+    /**
+     * The queue ran out. Shuffled queues get a fresh spread over the same source; unshuffled
+     * queues wrap back to the top. Playback keeps going instead of stopping on the last track.
+     */
+    private fun continueAfterQueueEnd() {
+        val current = state.value
+        val source = current.playbackQueue
+        if (source.size <= 1) {
+            mutate(persist = false) {
+                it.copy(isPlaying = false, visualizer = PlaybackVisualizerState.idle())
+            }
+            return
+        }
+
+        val nextQueue = if (current.shuffleEnabled) {
+            reshufflePlaybackQueue(source, current.currentTrackId, random)
+        } else {
+            source
+        }
+        val startId = nextQueue.firstOrNull()?.id ?: return
+
+        mutate { currentState ->
+            currentState.copy(
+                currentTrackId = startId,
+                playbackQueue = nextQueue,
+                isPlaying = true,
+                visualizer = PlaybackVisualizerState.idle().copy(active = true),
+                playbackPositionMs = 0L,
+                playbackDurationMs = nextQueue.firstOrNull()?.durationMs ?: 0L,
+            )
+        }
+        playbackBackend.playQueue(nextQueue, startId, ::syncPlaybackState)
     }
 
     private fun mergeVisualizer(
@@ -703,21 +782,18 @@ class DesktopController(
         isPlaying: Boolean,
     ): PlaybackVisualizerState {
         if (incoming == null) {
+            // No new frame: keep the last one while playing, otherwise let the bars fall away.
             return if (isPlaying) current else decayVisualizer(current)
         }
 
-        val maxSize = max(current.bands.size, incoming.bands.size)
-        val currentBands = current.bands.padTo(maxSize)
-        val incomingBands = incoming.bands.padTo(maxSize)
-        val smoothedBands = currentBands.zip(incomingBands) { old, next ->
-            val blend = if (next >= old) 0.58f else 0.26f
-            (old + (next - old) * blend).coerceIn(0f, 1f)
-        }
-        val intensity = (current.intensity * 0.32f + incoming.intensity * 0.68f).coerceIn(0f, 1f)
+        // The renderer interpolates at frame rate, so this only has to keep the same band count
+        // and carry the "is this real spectrum" flag through.
+        val bandCount = if (incoming.bands.isNotEmpty()) incoming.bands.size else current.bands.size
         return PlaybackVisualizerState(
-            bands = smoothedBands,
-            intensity = intensity,
+            bands = incoming.bands.takeIf { it.size == bandCount } ?: incoming.bands.padTo(bandCount),
+            intensity = incoming.intensity.coerceIn(0f, 1f),
             active = isPlaying && incoming.active,
+            spectrumLive = incoming.spectrumLive,
         )
     }
 
@@ -843,5 +919,20 @@ class DesktopController(
 
     private companion object {
         const val ALL_TRACKS_PLAYLIST_ID = "library-all"
+        const val VISUALIZER_BANDS = 32
     }
 }
+
+/**
+ * The track list a queue should be built from for the section the listener is looking at.
+ * Single definition so every entry point (play, shuffle, rebuild) agrees on the source set.
+ */
+private fun DesktopUiState.queueSource(): List<TrackRecord> = when (selectedSection) {
+    DesktopSection.PLAYLISTS -> selectedPlaylistTracks.ifEmpty { snapshot.tracks }
+    DesktopSection.SEARCH -> filteredTracks.ifEmpty { snapshot.tracks }
+    else -> snapshot.tracks
+}
+
+/** Duration lookup that only scans the (small) playback queue, never the whole library. */
+private val DesktopUiState.queueTrack: TrackRecord?
+    get() = currentTrackId?.let { id -> playbackQueue.firstOrNull { it.id == id } }

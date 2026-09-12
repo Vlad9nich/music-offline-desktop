@@ -197,17 +197,86 @@ class DesktopControllerTest {
         assertEquals("Укажи URL OCR сервера.", controller.state.value.ocrStatus)
     }
 
+    @Test
+    fun `toggling shuffle pushes the new order to the player in place`() {
+        val backend = FakePlaybackBackend()
+        val controller = controller(backend = backend, libraryRepository = FakeLibraryRepository(extraTracks = 11))
+        val trackId = controller.state.value.snapshot.tracks.first().id
+
+        controller.playTrack(trackId)
+        val playingOrder = backend.queue
+        assertFalse(backend.lastQueueSwapWasInPlace)
+
+        controller.toggleShuffle()
+
+        assertTrue(controller.state.value.shuffleEnabled)
+        // The player must actually receive the new order, and without restarting the track.
+        assertTrue(backend.lastQueueSwapWasInPlace)
+        assertEquals(controller.state.value.playbackQueue.map { it.id }, backend.queue)
+        assertEquals(playingOrder.toSet(), backend.queue.toSet())
+        assertTrue(playingOrder != backend.queue, "shuffle should change the order for a 12 track library")
+
+        controller.toggleShuffle()
+
+        assertFalse(controller.state.value.shuffleEnabled)
+        assertEquals(playingOrder, backend.queue)
+    }
+
+    @Test
+    fun `queue exhaustion reshuffles instead of stopping on the last track`() {
+        val backend = FakePlaybackBackend()
+        val controller = controller(backend = backend, libraryRepository = FakeLibraryRepository(extraTracks = 5))
+        val trackId = controller.state.value.snapshot.tracks.first().id
+
+        controller.playTrack(trackId)
+        controller.toggleShuffle()
+
+        backend.emit(
+            PlaybackSnapshot(
+                currentTrackId = trackId,
+                isPlaying = false,
+                queueExhausted = true,
+                positionMs = 180_000L,
+                durationMs = 180_000L,
+            ),
+        )
+
+        assertTrue(controller.state.value.isPlaying, "playback should continue after the queue runs out")
+        assertEquals(0L, controller.state.value.playbackPositionMs)
+        assertEquals(controller.state.value.playbackQueue.map { it.id }, backend.queue)
+        assertTrue(backend.queue.size == controller.state.value.snapshot.tracks.size)
+    }
+
+    @Test
+    fun `single track queue stops cleanly when it ends`() {
+        val backend = FakePlaybackBackend()
+        val controller = controller(backend = backend, libraryRepository = FakeLibraryRepository(extraTracks = 0))
+        val trackId = controller.state.value.snapshot.tracks.first().id
+
+        controller.playTrack(trackId)
+        backend.emit(
+            PlaybackSnapshot(
+                currentTrackId = trackId,
+                isPlaying = false,
+                queueExhausted = true,
+            ),
+        )
+
+        assertFalse(controller.state.value.isPlaying)
+    }
+
     private fun controller(
         backend: FakePlaybackBackend,
         sourceCatalog: MusicSourceCatalog = FakeMusicSourceCatalog(),
         ocrClient: OcrImportClient = FakeOcrClient(),
         downloadManager: DownloadManager = FakeDownloadManager(),
+        libraryRepository: FakeLibraryRepository = FakeLibraryRepository(),
     ): DesktopController {
         val stateFile = File.createTempFile("yaneodex-controller", ".json")
         stateFile.deleteOnExit()
         return DesktopController(
             config = DesktopConfig(null, null, null, null),
-            libraryRepository = FakeLibraryRepository(),
+            libraryRepository = libraryRepository,
             sourceCatalog = sourceCatalog,
             ocrClient = ocrClient,
             persistence = DesktopPersistence(stateFile),
@@ -240,9 +309,25 @@ private class FakePlaybackBackend : PlaybackBackend {
     var lastVolume: Float = 0.72f
         private set
 
+    /** Order last handed to the player, either by playQueue or setQueue. */
+    var queue: List<String> = emptyList()
+        private set
+
+    /** True when the order arrived via setQueue (i.e. without restarting playback). */
+    var lastQueueSwapWasInPlace: Boolean = false
+        private set
+
     override fun playQueue(queue: List<TrackRecord>, startTrackId: String?, onState: (PlaybackSnapshot) -> Unit) {
         callback = onState
         startedTrackId = startTrackId
+        this.queue = queue.map { it.id }
+        lastQueueSwapWasInPlace = false
+    }
+
+    override fun setQueue(queue: List<TrackRecord>, onState: (PlaybackSnapshot) -> Unit) {
+        callback = onState
+        this.queue = queue.map { it.id }
+        lastQueueSwapWasInPlace = true
     }
 
     override fun togglePlayPause(onState: (PlaybackSnapshot) -> Unit) {
@@ -308,7 +393,7 @@ private class FakeMusicSourceCatalog : MusicSourceCatalog {
     }
 }
 
-private class FakeLibraryRepository : LibraryRepository {
+private class FakeLibraryRepository(extraTracks: Int = 0) : LibraryRepository {
     private var roots: List<String> = listOf("C:\\Music")
     private var snapshot: LibrarySnapshot = LibrarySnapshot(
         tracks = listOf(
@@ -321,9 +406,29 @@ private class FakeLibraryRepository : LibraryRepository {
                 durationMs = 180_000,
                 importedAtEpochMs = 1_700_000_000_000L,
             ),
-        ),
+        ) + List(extraTracks) { index ->
+            // Two tracks per artist so shuffle has something to spread.
+            val trackNumber = index + 2
+            TrackRecord(
+                id = "track-$trackNumber",
+                uri = "file:///C:/Music/track-$trackNumber.mp3",
+                sourceUri = "C:\\Music\\track-$trackNumber.mp3",
+                title = "Track $trackNumber",
+                artist = "Artist ${(index / 2) + 2}",
+                durationMs = 180_000,
+                importedAtEpochMs = 1_700_000_000_000L + trackNumber,
+            )
+        },
         playlists = listOf(
-            PlaylistRecord("library-all", "All Tracks", "AT", "#95F15A", "", listOf("track-1"), 1_700_000_000_000L),
+            PlaylistRecord(
+                "library-all",
+                "All Tracks",
+                "AT",
+                "#95F15A",
+                "",
+                listOf("track-1") + List(extraTracks) { "track-${it + 2}" },
+                1_700_000_000_000L,
+            ),
             PlaylistRecord("playlist-1", "Inbox", "IN", "#E7C669", "", emptyList(), 1_700_000_000_001L),
         ),
     )
