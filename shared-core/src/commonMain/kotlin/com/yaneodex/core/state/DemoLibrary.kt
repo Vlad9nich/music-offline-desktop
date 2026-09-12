@@ -21,7 +21,7 @@ object DemoLibrary {
         return DesktopUiState(
             snapshot = snapshot,
             libraryRoots = emptyList(),
-            libraryStatus = "Добавь папки с музыкой.",
+            libraryStatus = "Треков: ${snapshot.tracks.size}",
             language = AppLanguage.RU,
             selectedSection = DesktopSection.HOME,
             selectedPlaylistId = firstPlaylist.id,
@@ -35,10 +35,10 @@ object DemoLibrary {
             isPlaying = false,
             searchQuery = "",
             parserResults = emptyList(),
-            parserStatus = "Запусти поиск.",
+            parserStatus = "",
             parserLoading = false,
             ocrSettings = OcrSettings(),
-            ocrStatus = "Выбери скриншоты.",
+            ocrStatus = "",
             ocrLoading = false,
             importMatches = emptyList<MatchedTrackCandidate>(),
             spotlight = SpotlightCard(

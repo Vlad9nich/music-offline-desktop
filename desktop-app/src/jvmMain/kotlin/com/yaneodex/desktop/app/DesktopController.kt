@@ -676,13 +676,16 @@ class DesktopController(
         val selectedPlaylist = storedLibrary.snapshot.playlists.firstOrNull { it.id == restored.selectedPlaylistId }
 
         return restored.copy(
-            libraryStatus = if (storedLibrary.snapshot.tracks.isEmpty()) {
-                text(restored.language, "Добавь папки с музыкой.", "Add music folders.")
-            } else {
-                text(restored.language, "Треков: ${storedLibrary.snapshot.tracks.size}", "Tracks: ${storedLibrary.snapshot.tracks.size}")
-            },
-            parserStatus = if (restored.parserResults.isEmpty()) strings(restored.language).parserResultsIdle else restored.parserStatus,
-            ocrStatus = if (restored.importMatches.isEmpty()) text(restored.language, "Выбери скриншоты.", "Choose screenshots.") else restored.ocrStatus,
+            libraryStatus = text(
+                restored.language,
+                "Треков: ${storedLibrary.snapshot.tracks.size}",
+                "Tracks: ${storedLibrary.snapshot.tracks.size}",
+            ),
+            // Idle status lines stay empty on purpose. They used to be seeded with prompts like
+            // "Запусти поиск" / "Выбери скриншоты", which are instructions, not status: they
+            // rendered permanently and read as clutter. A blank line hides its card entirely.
+            parserStatus = if (restored.parserResults.isEmpty()) "" else restored.parserStatus,
+            ocrStatus = if (restored.importMatches.isEmpty()) "" else restored.ocrStatus,
             spotlight = selectedPlaylist?.let { spotlightFor(it.name, it.tone) } ?: restored.spotlight,
         )
     }

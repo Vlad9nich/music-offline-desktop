@@ -28,6 +28,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -44,6 +46,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -57,7 +60,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -93,6 +95,7 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -646,9 +649,16 @@ private fun MainColumn(
                         }
                         DesktopSection.SEARCH -> {
                             Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                                StatusCard(strings.sectionParser, state.parserStatus)
-                                SectionTitle(strings.sectionParserResults)
-                                ParserResults(state.parserResults, strings, onParserResultClick, onParserPreview, onParserDownload, onParserAddToPlaylist)
+                                // Only surface the parser line when it actually reports something
+                                // (progress, a result count, a failure). At rest it used to read
+                                // "Запусти поиск" forever, which is instruction noise, not status.
+                                if (state.parserStatus.isNotBlank()) {
+                                    StatusCard(strings.sectionParser, state.parserStatus)
+                                }
+                                if (state.parserResults.isNotEmpty()) {
+                                    SectionTitle(strings.sectionParserResults)
+                                    ParserResults(state.parserResults, strings, onParserResultClick, onParserPreview, onParserDownload, onParserAddToPlaylist)
+                                }
                             }
                         }
                         DesktopSection.PLAYLISTS -> {
@@ -819,13 +829,15 @@ private fun Hero(state: DesktopUiState, strings: DesktopStrings, onPlayPlaylist:
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    Text(
-                        state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle,
-                        color = TextDim,
-                        style = MaterialTheme.typography.bodyLarge,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    state.currentTrack?.artist?.let { artist ->
+                        Text(
+                            artist,
+                            color = TextDim,
+                            style = MaterialTheme.typography.bodyLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     AccentAction(strings.playLaneAction, YdxGlyph.Play, Moss, onPlayPlaylist)
@@ -876,10 +888,7 @@ private fun OnboardingSection(
             modifier = Modifier.fillMaxHeight(),
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(strings.onboardingTitle, color = TextPrimary, style = MaterialTheme.typography.displaySmall)
-                Text(strings.onboardingSubtitle, color = TextDim, style = MaterialTheme.typography.bodyLarge)
-            }
+            Text(strings.onboardingTitle, color = TextPrimary, style = MaterialTheme.typography.displaySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 AccentAction(strings.onboardingPrimaryAction, YdxGlyph.Folder, Moss, onImportLibraryFolders)
                 AccentAction(strings.onboardingSecondaryAction, YdxGlyph.Refresh, Gold, onRefreshLibrary)
@@ -1012,9 +1021,13 @@ private fun ImportSection(
                 AccentAction(strings.chooseScreenshotsAction, YdxGlyph.Folder, Moss, onPickScreenshots)
             }
         }
-        StatusCard(strings.sectionOcr, state.ocrStatus)
-        SectionTitle(strings.sectionImportReview)
-        ImportMatches(state.importMatches, strings)
+        if (state.ocrStatus.isNotBlank()) {
+            StatusCard(strings.sectionOcr, state.ocrStatus)
+        }
+        if (state.importMatches.isNotEmpty()) {
+            SectionTitle(strings.sectionImportReview)
+            ImportMatches(state.importMatches, strings)
+        }
     }
 }
 
@@ -1026,60 +1039,108 @@ private fun RightRail(
     onToggleShuffle: () -> Unit,
     onPlayTrack: (String) -> Unit,
 ) {
-    Surface(modifier = Modifier.width(metrics.rightRailWidth).fillMaxHeight(), color = Panel, shape = RoundedCornerShape(Wd2Radius.lg)) {
-        Column(modifier = Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(strings.sectionNowShaping, color = TextDim, style = MaterialTheme.typography.labelLarge)
-            CompactNowPlayingCard(
-                title = state.currentTrack?.title ?: strings.noTrackSelected,
-                subtitle = state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle,
-            )
-            // Shuffle toggle doubles as the queue summary.
+    val upNext = state.playbackQueue.take(if (metrics.compact) 3 else 6)
+    val statuses = listOf(state.parserStatus, state.ocrStatus).filter { it.isNotBlank() }
+
+    Surface(
+        modifier = Modifier.width(metrics.rightRailWidth).fillMaxHeight(),
+        color = Panel,
+        shape = RoundedCornerShape(Wd2Radius.lg),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(strings.sectionNowShaping, color = Muted, style = MaterialTheme.typography.labelLarge)
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Wd2Radius.md))
-                    .background(if (state.shuffleEnabled) Wd2.AccentSoft else PanelRaised)
-                    .pressClickable(onClick = onToggleShuffle)
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                ArtworkBadge(
+                    label = state.currentTrack?.title?.take(2)?.uppercase() ?: "YN",
+                    color = Wd2.Accent,
+                    compact = true,
+                )
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        state.currentTrack?.title ?: strings.noTrackSelected,
+                        color = TextPrimary,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    state.currentTrack?.artist?.let { artist ->
+                        Text(
+                            artist,
+                            color = TextDim,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+
+            SettingsDivider()
+
+            // Queue summary, with shuffle as an actual button. It used to be one big red-tinted
+            // block carrying both the count and the label, which shouted louder than the track
+            // that is playing.
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
                         "${strings.queueLabel} · ${state.playbackQueue.size}",
-                        color = if (state.shuffleEnabled) Wd2.Accent else TextDim,
-                        style = MaterialTheme.typography.labelLarge,
+                        color = TextPrimary,
+                        style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
-                        if (state.shuffleEnabled) "${strings.shuffleLabel}: ${strings.shuffleOn}" else "${strings.shuffleLabel}: ${strings.shuffleOff}",
-                        color = TextPrimary,
-                        style = MaterialTheme.typography.bodySmall,
+                        "${strings.shuffleLabel}: " +
+                            if (state.shuffleEnabled) strings.shuffleOn else strings.shuffleOff,
+                        color = if (state.shuffleEnabled) Wd2.Accent else Muted,
+                        style = MaterialTheme.typography.labelSmall,
                     )
                 }
-                YdxIcon(
-                    YdxGlyph.Shuffle,
-                    tint = if (state.shuffleEnabled) Wd2.Accent else Muted,
-                    boxSize = 20.dp,
-                    contentDescription = strings.shuffleLabel,
+                RoundAction(
+                    icon = YdxGlyph.Shuffle,
+                    active = state.shuffleEnabled,
+                    onClick = onToggleShuffle,
+                    size = 34.dp,
+                    iconSize = 19.dp,
                 )
             }
-            Text(
-                state.parserStatus,
-                color = Muted,
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                state.ocrStatus,
-                color = Muted.copy(alpha = 0.8f),
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(strings.sectionUpNext, color = TextDim, style = MaterialTheme.typography.labelLarge)
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                state.playbackQueue.take(if (metrics.compact) 3 else 6).forEach { track -> QueueRow(track, onPlayTrack, compact = true) }
+
+            if (statuses.isNotEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Wd2Radius.md))
+                        .background(Wd2.BgElevated)
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    statuses.forEach { status ->
+                        Text(
+                            status,
+                            color = Muted,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+
+            SettingsDivider()
+
+            Text(strings.sectionUpNext, color = Muted, style = MaterialTheme.typography.labelLarge)
+            if (upNext.isEmpty()) {
+                Text(strings.noTrackSelected, color = Muted, style = MaterialTheme.typography.bodySmall)
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    upNext.forEachIndexed { index, track ->
+                        QueueRow(index = index + 1, track = track, onPlayTrack = onPlayTrack, compact = true)
+                    }
+                }
             }
         }
     }
@@ -1146,13 +1207,15 @@ private fun BottomPlayer(
                             Crossfade(state.currentTrack?.title ?: strings.noTrackSelected, label = "bottom-track-title-compact") { title ->
                                 Text(title, color = TextPrimary, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            Text(
-                                state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle,
-                                color = TextDim,
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                            state.currentTrack?.artist?.let { artist ->
+                                Text(
+                                    artist,
+                                    color = TextDim,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
                         PlaybackVisualizer(
                             state = state.visualizer,
@@ -1196,13 +1259,15 @@ private fun BottomPlayer(
                             Crossfade(state.currentTrack?.title ?: strings.noTrackSelected, label = "bottom-track-title") { title ->
                                 Text(title, color = TextPrimary, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            Text(
-                                state.currentTrack?.artist ?: strings.noTrackSelectedSubtitle,
-                                color = TextDim,
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                            state.currentTrack?.artist?.let { artist ->
+                                Text(
+                                    artist,
+                                    color = TextDim,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
                     }
                     PlaybackVisualizer(
@@ -1473,9 +1538,7 @@ private fun TrackList(
                 onClear = { selectedTrackIds = emptySet() },
             )
         }
-        if (tracks.isEmpty()) {
-            EmptyState(strings.emptyStateTitle)
-        } else {
+        if (tracks.isNotEmpty()) {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1659,10 +1722,7 @@ private fun ParserResults(
     onParserDownload: (RemoteTrackCandidate) -> Unit,
     onParserAddToPlaylist: (RemoteTrackCandidate) -> Unit,
 ) {
-    if (results.isEmpty()) {
-        EmptyState(strings.noParserResults)
-        return
-    }
+    if (results.isEmpty()) return
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         results.forEach { item ->
@@ -1722,7 +1782,9 @@ private fun ImportMatches(matches: List<MatchedTrackCandidate>, strings: Desktop
             Surface(shape = RoundedCornerShape(Wd2Radius.md), color = Panel) {
                 Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(item.recognized.rawText, color = TextPrimary, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(item.message ?: strings.importReadyMessage, color = accent, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    item.message?.let { message ->
+                        Text(message, color = accent, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
                     item.bestMatch?.let { match ->
                         Text("${match.artist} - ${match.title}", color = Muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
@@ -1733,13 +1795,18 @@ private fun ImportMatches(matches: List<MatchedTrackCandidate>, strings: Desktop
 }
 
 @Composable
-private fun QueueRow(track: TrackRecord, onPlayTrack: (String) -> Unit, compact: Boolean = false) {
+private fun QueueRow(
+    index: Int,
+    track: TrackRecord,
+    onPlayTrack: (String) -> Unit,
+    compact: Boolean = false,
+) {
     val interactionSource = remember { MutableInteractionSource() }
     val hovered by interactionSource.collectIsHoveredAsState()
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = if (compact) 42.dp else 56.dp)
+            .heightIn(min = if (compact) 40.dp else 54.dp)
             .clip(RoundedCornerShape(Wd2Radius.md))
             .background(
                 when {
@@ -1750,17 +1817,19 @@ private fun QueueRow(track: TrackRecord, onPlayTrack: (String) -> Unit, compact:
             )
             .hoverable(interactionSource = interactionSource)
             .pressClickable { onPlayTrack(track.id) }
-            .padding(horizontal = if (compact) 8.dp else 10.dp, vertical = if (compact) 6.dp else 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp),
+            .padding(horizontal = if (compact) 8.dp else 10.dp, vertical = if (compact) 5.dp else 9.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // A quiet position number reads as a queue. It used to be a lone initial letter pinned
+        // into a 14dp column, which looked like a badge that had failed to load.
         Text(
-            track.title.take(1).uppercase(),
-            color = if (hovered) Wd2.Accent else Moss,
-            style = MaterialTheme.typography.labelMedium,
-            modifier = Modifier.width(14.dp),
+            index.toString().padStart(2, '0'),
+            color = if (hovered) Wd2.Accent else Muted.copy(alpha = 0.7f),
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.width(18.dp),
         )
-        Column(modifier = Modifier.weight(1f)) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(track.title, color = TextPrimary, style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(track.artist, color = TextDim, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
@@ -1803,28 +1872,6 @@ private fun StatusCard(title: String, body: String) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, color = TextDim, style = MaterialTheme.typography.labelLarge)
             Text(body, color = TextPrimary, style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis)
-        }
-    }
-}
-
-@Composable
-private fun CompactNowPlayingCard(title: String, subtitle: String) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(3.dp),
-    ) {
-        Text(title, color = TextPrimary, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Text(subtitle, color = TextDim, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-}
-
-@Composable
-private fun EmptyState(title: String) {
-    Surface(shape = RoundedCornerShape(Wd2Radius.md), color = Panel) {
-        Box(Modifier.fillMaxWidth().padding(18.dp), contentAlignment = Alignment.CenterStart) {
-            Text(title, color = Muted, style = MaterialTheme.typography.bodyLarge)
         }
     }
 }
@@ -2440,7 +2487,18 @@ private fun PlaybackVisualizer(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Seek bar.
+ *
+ * This used to be a Material3 `Slider` dressed up as something else: a 10dp pill track with a
+ * 1dp border, a red -> white horizontal gradient for the played part, and a white thumb ringed
+ * in red on top. Four competing ideas stacked on ten pixels, which is what read as crude.
+ *
+ * Now it is one flat rail that thickens when you reach for it, fills with white at rest and
+ * picks up the accent only while you are actually interacting — red stays reserved for active
+ * state, the way the rest of the shell uses it. The thumb is a plain dot that fades in on
+ * hover, so the bar is a hairline when you are just listening.
+ */
 @Composable
 private fun PlaybackTimeline(
     positionMs: Long,
@@ -2451,55 +2509,45 @@ private fun PlaybackTimeline(
 ) {
     val safeDuration = durationMs.coerceAtLeast(0L)
     val safePosition = clampTimelinePosition(positionMs, safeDuration)
-    val progress = if (safeDuration > 0L) (safePosition.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f) else 0f
-    var sliderPositionMs by remember(safePosition, safeDuration) { mutableStateOf(safePosition.toFloat()) }
+    val interactive = safeDuration > 0L
+
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
     var dragging by remember { mutableStateOf(false) }
-    val displayedProgress = if (safeDuration > 0L) {
-        ((if (dragging) sliderPositionMs else safePosition.toFloat()) / safeDuration.toFloat()).coerceIn(0f, 1f)
+    var dragFraction by remember { mutableStateOf(0f) }
+
+    val playbackFraction = if (safeDuration > 0L) {
+        (safePosition.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f)
     } else {
-        progress
+        0f
     }
-    val animatedProgress by animateFloatAsState(
-        targetValue = displayedProgress,
-        animationSpec = tween(180),
-        label = "timeline-progress",
+    // Follow the pointer 1:1 while dragging; otherwise ease toward the clock, so the 250ms
+    // timeline tick reads as motion instead of a jump.
+    val fraction by animateFloatAsState(
+        targetValue = if (dragging) dragFraction else playbackFraction,
+        animationSpec = tween(if (dragging) 0 else 220),
+        label = "timeline-fraction",
     )
 
-    LaunchedEffect(safePosition, safeDuration, dragging) {
-        if (!dragging) {
-            sliderPositionMs = safePosition.toFloat()
-        }
-    }
+    val active = interactive && (hovered || dragging)
+    val activeAmount by animateFloatAsState(if (active) 1f else 0f, tween(160), label = "timeline-active")
+    val railHeight by animateDpAsState(if (active) 6.dp else 4.dp, tween(160), label = "timeline-rail")
+    val thumbSize by animateDpAsState(if (dragging) 14.dp else 12.dp, tween(140), label = "timeline-thumb")
+    val thumbAlpha by animateFloatAsState(if (active) 1f else 0f, tween(140), label = "timeline-thumb-alpha")
 
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Slider(
-            value = if (dragging) sliderPositionMs else safePosition.toFloat(),
-            onValueChange = { nextValue ->
-                dragging = true
-                sliderPositionMs = nextValue.coerceIn(0f, safeDuration.coerceAtLeast(1L).toFloat())
-            },
-            onValueChangeFinished = {
-                dragging = false
-                onSeek(clampTimelinePosition(sliderPositionMs.roundToLong(), safeDuration))
-            },
-            valueRange = 0f..safeDuration.coerceAtLeast(1L).toFloat(),
-            enabled = safeDuration > 0L,
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White.copy(alpha = 0.92f),
-                activeTrackColor = accent,
-                inactiveTrackColor = PanelRaised,
-                activeTickColor = Color.Transparent,
-                inactiveTickColor = Color.Transparent,
-                disabledThumbColor = Muted,
-                disabledActiveTrackColor = accent.copy(alpha = 0.32f),
-                disabledInactiveTrackColor = PanelRaised,
-            ),
+    val fillColor = lerp(Wd2.Text.copy(alpha = 0.82f), accent, activeAmount)
+    val railColor = lerp(PanelRaised, Wd2.LineStrong, activeAmount)
+    val displayedPosition = if (dragging) (dragFraction * safeDuration).roundToLong() else safePosition
+
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(18.dp)
-                .focusable(enabled = safeDuration > 0L)
+                .height(20.dp)
+                .hoverable(interactionSource = interactionSource, enabled = interactive)
+                .focusable(enabled = interactive)
                 .onPreviewKeyEvent { event ->
-                    if (safeDuration <= 0L || event.type != KeyEventType.KeyDown) {
+                    if (!interactive || event.type != KeyEventType.KeyDown) {
                         return@onPreviewKeyEvent false
                     }
                     val step = timelineKeyboardStepMs(safeDuration)
@@ -2508,55 +2556,71 @@ private fun PlaybackTimeline(
                             onSeek(clampTimelinePosition(safePosition - step, safeDuration))
                             true
                         }
+
                         Key.DirectionRight -> {
                             onSeek(clampTimelinePosition(safePosition + step, safeDuration))
                             true
                         }
+
                         else -> false
                     }
-                },
-            thumb = { _ ->
-                Box(
-                    modifier = Modifier
-                        .size(14.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.96f))
-                        .border(1.dp, accent.copy(alpha = 0.42f), CircleShape),
-                )
-            },
-            track = { _ ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(10.dp)
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(PanelRaised)
-                        .border(1.dp, Outline, RoundedCornerShape(999.dp)),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(animatedProgress.coerceIn(0f, 1f))
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(
-                                Brush.horizontalGradient(
-                                    listOf(
-                                        accent.copy(alpha = 0.58f),
-                                        accent,
-                                        Color.White.copy(alpha = 0.88f),
-                                    ),
-                                ),
-                            ),
-                    )
                 }
-            },
-        )
+                .pointerInput(interactive, safeDuration) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        if (!interactive) return@awaitEachGesture
+                        val width = size.width.toFloat().coerceAtLeast(1f)
+                        var latest = (down.position.x / width).coerceIn(0f, 1f)
+                        dragging = true
+                        dragFraction = latest
+                        down.consume()
+                        while (true) {
+                            val change = awaitPointerEvent().changes.firstOrNull() ?: break
+                            if (!change.pressed) break
+                            latest = (change.position.x / width).coerceIn(0f, 1f)
+                            dragFraction = latest
+                            change.consume()
+                        }
+                        dragging = false
+                        onSeek(clampTimelinePosition((latest * safeDuration).roundToLong(), safeDuration))
+                    }
+                },
+        ) {
+            // The dot rides inside the rail, so the fill always ends at the dot's centre.
+            val travel = (maxWidth - thumbSize).coerceAtLeast(0.dp)
+            val thumbOffset = travel * fraction
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth()
+                    .height(railHeight)
+                    .clip(RoundedCornerShape(Wd2Radius.pill))
+                    .background(railColor),
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .width(thumbSize / 2 + thumbOffset)
+                    .height(railHeight)
+                    .clip(RoundedCornerShape(Wd2Radius.pill))
+                    .background(fillColor),
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .offset(x = thumbOffset)
+                    .size(thumbSize)
+                    .clip(CircleShape)
+                    .background(fillColor.copy(alpha = fillColor.alpha * thumbAlpha)),
+            )
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(formatDuration(safePosition), color = accent.copy(alpha = 0.95f), style = MaterialTheme.typography.labelMedium)
+            Text(formatDuration(displayedPosition), color = fillColor, style = MaterialTheme.typography.labelMedium)
             Text(formatDuration(safeDuration), color = Muted, style = MaterialTheme.typography.labelMedium)
         }
     }
